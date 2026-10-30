@@ -54,3 +54,15 @@ def test_window_restores_and_remembers_audio_track_by_channel(tmp_path, monkeypa
     assert requested_tracks == [2]
     assert preferences.audio_track_id(channel) == 2
     window.close()
+
+
+def test_window_shows_stream_title_in_status_bar(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat)
+    window = MainWindow(preferences=PlayerPreferences(settings))
+    window.current_channel = Channel(name="News", url="rtsp://example.com/news")
+
+    window._on_stream_title_changed("Live bulletin")
+
+    assert window.statusBar().currentMessage() == "Playing: News — Live bulletin"
+    window.close()

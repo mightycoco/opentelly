@@ -189,6 +189,35 @@ def test_worker_reports_audio_tracks_and_queues_track_selection() -> None:
     assert process.commands[-1][0] == ["set_property", "aid", 3]
 
 
+def test_worker_reports_stream_titles_from_metadata() -> None:
+    worker = ready_worker(FakeMpvProcess())
+    titles = QSignalSpy(worker.stream_title_changed)
+
+    worker._handle_mpv_message(
+        {
+            "event": "property-change",
+            "name": "metadata",
+            "data": {"TITLE": "  Evening News  "},
+        }
+    )
+    worker._handle_mpv_message(
+        {
+            "event": "property-change",
+            "name": "metadata",
+            "data": {"title": "Programme", "ICY-TITLE": "Artist - Track"},
+        }
+    )
+    worker._handle_mpv_message(
+        {"event": "property-change", "name": "metadata", "data": {}}
+    )
+
+    assert [titles.at(index)[0] for index in range(titles.count())] == [
+        "Evening News",
+        "Artist - Track",
+        "",
+    ]
+
+
 def test_worker_refreshes_track_list_after_audio_selection() -> None:
     process = FakeMpvProcess()
     worker = ready_worker(process)

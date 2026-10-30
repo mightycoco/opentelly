@@ -14,7 +14,7 @@ class FakeWin32File:
         self.handles = []
         self.writes = []
         self.closed = []
-        self.read_handles = set()
+        self.read_counts = {}
 
     def CreateFile(self, *args):
         handle = object()
@@ -25,10 +25,14 @@ class FakeWin32File:
         self.writes.append((handle, json.loads(data)))
 
     def ReadFile(self, handle, size):
-        if handle in self.read_handles:
+        requests = [
+            payload for written_handle, payload in self.writes if written_handle is handle
+        ]
+        read_count = self.read_counts.get(handle, 0)
+        if read_count >= len(requests):
             raise FakePipeEmpty()
-        self.read_handles.add(handle)
-        request = next(payload for written_handle, payload in self.writes if written_handle is handle)
+        request = requests[read_count]
+        self.read_counts[handle] = read_count + 1
         response = {
             "request_id": request["request_id"],
             "error": "success",
@@ -125,4 +129,41 @@ def test_observed_property_uses_a_persistent_monitor_connection(monkeypatch) -> 
         "data": [{"type": "audio", "id": 4, "selected": True}],
     }
     assert client._monitor_handle is file_api.handles[0]
+    client.close()
+
+
+def test_multiple_observed_properties_share_a_monitor_connection(monkeypatch) -> None:
+    file_api = FakeWin32File()
+    pipe_api = FakeWin32Pipe()
+    monkeypatch.setattr(mpv_ipc, "win32file", file_api)
+    monkeypatch.setattr(mpv_ipc, "win32pipe", pipe_api)
+
+    client = mpv_ipc.MpvIpcClient("test-pipe")
+    client._stop_event = threading.Event()
+    messages = []
+    client.add_callback(messages.append)
+
+    track_request_id = client.observe_property("track-list", 7)
+    title_request_id = client.observe_property("metadata", 8)
+    deadline = time.monotonic() + 1
+    while not any(
+        message.get("event") == "property-change" and message.get("name") == "metadata"
+        for message in messages
+    ):
+        if time.monotonic() >= deadline:
+            raise AssertionError("The second observed property event was not dispatched")
+        time.sleep(0.01)
+
+    assert len(file_api.handles) == 1
+    assert [payload for _, payload in file_api.writes] == [
+        {
+            "command": ["observe_property", 7, "track-list"],
+            "request_id": track_request_id,
+        },
+        {
+            "command": ["observe_property", 8, "metadata"],
+            "request_id": title_request_id,
+        },
+    ]
+    assert messages[-1]["name"] == "metadata"
     client.close()

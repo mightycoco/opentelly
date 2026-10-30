@@ -21,6 +21,7 @@ class MpvWorker(QObject):
     channel_failed = Signal(str)
     audio_tracks_changed = Signal(object)
     audio_tracks_snapshot = Signal(object)
+    stream_title_changed = Signal(str)
     audio_selection_failed = Signal(str)
     stopped = Signal()
     mpv_message = Signal(dict)
@@ -40,6 +41,7 @@ class MpvWorker(QObject):
         self._command_queue: queue.Queue[tuple[int, list[str | int]] | None] = queue.Queue()
         self._audio_request_ids: set[int] = set()
         self._track_query_request_ids: set[int] = set()
+        self._stream_title = ""
         self._started = False
         self._starting = False
         self._stopping = False
@@ -72,6 +74,7 @@ class MpvWorker(QObject):
             self._process.ipc.add_callback(self.mpv_message.emit)
             self._process.start(hwnd)
             self._process.observe_property("track-list", 1)
+            self._process.observe_property("metadata", 2)
         except Exception as exc:
             logger.exception("Failed to start mpv")
             try:
@@ -111,6 +114,8 @@ class MpvWorker(QObject):
 
         self._pending_channel = channel
         self._pending_request_id = request_id
+        self._stream_title = ""
+        self.stream_title_changed.emit("")
         self._channels_by_request_id[request_id] = channel
         self._track_query_request_ids.clear()
         self.audio_tracks_changed.emit([])
@@ -194,6 +199,11 @@ class MpvWorker(QObject):
         if event == "property-change" and message.get("name") == "track-list":
             tracks = self._parse_audio_tracks(message.get("data"))
             self.audio_tracks_changed.emit(tracks)
+        elif event == "property-change" and message.get("name") == "metadata":
+            title = self._parse_stream_title(message.get("data"))
+            if title != self._stream_title:
+                self._stream_title = title
+                self.stream_title_changed.emit(title)
         elif event == "file-loaded":
             playlist_entry_id = message.get("playlist_entry_id")
             if playlist_entry_id is None:
@@ -213,6 +223,18 @@ class MpvWorker(QObject):
                     or "stream could not be opened"
                 )
                 self._fail_pending_request(entry[0], f"Unable to play {entry[1].name}: {details}")
+
+    @staticmethod
+    def _parse_stream_title(data: object) -> str:
+        if not isinstance(data, dict):
+            return ""
+
+        metadata = {
+            key.casefold(): value.strip()
+            for key, value in data.items()
+            if isinstance(key, str) and isinstance(value, str) and value.strip()
+        }
+        return metadata.get("icy-title") or metadata.get("title") or ""
 
     @staticmethod
     def _parse_audio_tracks(data: object) -> list[AudioTrack]:

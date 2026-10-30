@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from itertools import count
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,12 @@ class MpvIpcClient:
 
     def __init__(self, pipe_name: str) -> None:
         self.pipe_name = pipe_name
-        self.handle = None
-        self._monitor_handle = None
+        self.handle: int | None = None
+        self._monitor_handle: int | None = None
         self._buffer = ""
         self._monitor_thread: threading.Thread | None = None
         self._handle_lock = threading.Lock()
-        self._command_handles: set[Any] = set()
+        self._command_handles: set[int] = set()
         self._stop_event: threading.Event | None = None
         self._thread: threading.Thread | None = None
         self._callbacks: list[Callable[[dict[str, Any]], None]] = []
@@ -53,41 +53,60 @@ class MpvIpcClient:
     def observe_property(self, property_name: str, observer_id: int) -> int:
         if win32file is None or win32pipe is None:
             raise RuntimeError("pywin32 is required for Windows named-pipe IPC support")
-        with self._handle_lock:
-            if self._monitor_handle is not None:
-                raise RuntimeError("An mpv property monitor is already connected")
 
-        handle = self._open_pipe(timeout=10)
+        request_id = self.reserve_request_id()
+        payload = json.dumps(
+            {
+                "command": ["observe_property", observer_id, property_name],
+                "request_id": request_id,
+            },
+            ensure_ascii=False,
+        ) + "\n"
+        monitor_thread: threading.Thread | None = None
+        handle: int | None = None
         try:
+            with self._handle_lock:
+                if self._stop_event is not None and self._stop_event.is_set():
+                    raise RuntimeError("IPC client is shutting down")
+                handle = self._monitor_handle
+                if handle is not None:
+                    win32file.WriteFile(handle, payload.encode("utf-8"))
+                    return request_id
+
+            handle = self._open_pipe(timeout=10)
             win32pipe.SetNamedPipeHandleState(
                 handle,
                 win32pipe.PIPE_READMODE_BYTE | win32pipe.PIPE_NOWAIT,
                 None,
                 None,
             )
-            request_id = self.reserve_request_id()
-            payload = json.dumps(
-                {
-                    "command": ["observe_property", observer_id, property_name],
-                    "request_id": request_id,
-                },
-                ensure_ascii=False,
-            ) + "\n"
-            win32file.WriteFile(handle, payload.encode("utf-8"))
             with self._handle_lock:
                 if self._stop_event is not None and self._stop_event.is_set():
                     raise RuntimeError("IPC client is shutting down")
-                self._monitor_handle = handle
-            self._monitor_thread = threading.Thread(
-                target=self._monitor_loop,
-                args=(handle,),
-                name="mpv-property-monitor",
-                daemon=True,
-            )
-            self._monitor_thread.start()
+                existing_handle = self._monitor_handle
+                if existing_handle is not None:
+                    self._close_handle(handle)
+                    handle = existing_handle
+                    win32file.WriteFile(handle, payload.encode("utf-8"))
+                else:
+                    win32file.WriteFile(handle, payload.encode("utf-8"))
+                    self._monitor_handle = handle
+                    monitor_thread = threading.Thread(
+                        target=self._monitor_loop,
+                        args=(handle,),
+                        name="mpv-property-monitor",
+                        daemon=True,
+                    )
+                    self._monitor_thread = monitor_thread
+            if monitor_thread is not None:
+                monitor_thread.start()
             return request_id
         except Exception:
-            self._close_handle(handle)
+            if handle is not None:
+                with self._handle_lock:
+                    is_monitor_handle = handle is self._monitor_handle
+                if not is_monitor_handle:
+                    self._close_handle(handle)
             raise
 
     def send_command(
@@ -145,7 +164,11 @@ class MpvIpcClient:
                 if not raw_data:
                     raise RuntimeError("mpv closed the command IPC connection")
 
-                response_buffer += raw_data.decode("utf-8", errors="replace")
+                response_buffer += (
+                    raw_data
+                    if isinstance(raw_data, str)
+                    else raw_data.decode("utf-8", errors="replace")
+                )
                 while "\n" in response_buffer:
                     line, response_buffer = response_buffer.split("\n", 1)
                     if not line.strip():
@@ -165,7 +188,7 @@ class MpvIpcClient:
                 self._command_handles.discard(handle)
             self._close_handle(handle)
 
-    def _open_pipe(self, timeout: float):
+    def _open_pipe(self, timeout: float) -> int:
         if win32file is None or win32pipe is None:
             raise RuntimeError("pywin32 is required for Windows named-pipe IPC support")
 
@@ -180,14 +203,17 @@ class MpvIpcClient:
 
             try:
                 win32pipe.WaitNamedPipe(pipe_path, max(1, int(remaining * 1000)))
-                return win32file.CreateFile(
-                    pipe_path,
-                    win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                    0,
-                    None,
-                    win32file.OPEN_EXISTING,
-                    0,
-                    None,
+                return cast(
+                    int,
+                    win32file.CreateFile(
+                        pipe_path,
+                        win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                        0,
+                        None,
+                        win32file.OPEN_EXISTING,
+                        0,
+                        None,
+                    ),
                 )
             except Exception as exc:
                 error_code = getattr(exc, "winerror", None)
@@ -198,6 +224,9 @@ class MpvIpcClient:
                 time.sleep(min(0.1, max(0, deadline - time.monotonic())))
 
     def _read_loop(self) -> None:
+        if win32file is None:
+            logger.warning("pywin32 is required for Windows named-pipe IPC support")
+            return
         while self._stop_event is not None and not self._stop_event.is_set():
             handle = self.handle
             if handle is None:
@@ -215,7 +244,11 @@ class MpvIpcClient:
                 self._close_read_handle(handle)
                 return
 
-            chunk = raw_data.decode("utf-8", errors="replace")
+            chunk = (
+                raw_data.decode("utf-8", errors="replace")
+                if isinstance(raw_data, bytes)
+                else raw_data
+            )
             self._buffer += chunk
             while "\n" in self._buffer:
                 line, self._buffer = self._buffer.split("\n", 1)
@@ -228,7 +261,10 @@ class MpvIpcClient:
                     continue
                 self._dispatch(payload)
 
-    def _monitor_loop(self, handle) -> None:
+    def _monitor_loop(self, handle: int) -> None:
+        if win32file is None:
+            logger.warning("pywin32 is required for Windows named-pipe IPC support")
+            return
         buffer = ""
         while self._stop_event is not None and not self._stop_event.is_set():
             try:
@@ -250,7 +286,11 @@ class MpvIpcClient:
                 self._close_monitor_handle(handle)
                 return
 
-            buffer += raw_data.decode("utf-8", errors="replace")
+            buffer += (
+                raw_data.decode("utf-8", errors="replace")
+                if isinstance(raw_data, bytes)
+                else raw_data
+            )
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 if not line.strip():
@@ -289,20 +329,22 @@ class MpvIpcClient:
             if thread is not None and thread is not current_thread:
                 thread.join(timeout=1)
 
-    def _close_read_handle(self, handle) -> None:
+    def _close_read_handle(self, handle: int) -> None:
         with self._handle_lock:
             if self.handle is handle:
                 self.handle = None
         self._close_handle(handle)
 
-    def _close_monitor_handle(self, handle) -> None:
+    def _close_monitor_handle(self, handle: int) -> None:
         with self._handle_lock:
             if self._monitor_handle is handle:
                 self._monitor_handle = None
         self._close_handle(handle)
 
     @staticmethod
-    def _close_handle(handle) -> None:
+    def _close_handle(handle: int) -> None:
+        if win32file is None:
+            return
         try:
             win32file.CloseHandle(handle)
         except Exception:

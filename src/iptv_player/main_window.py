@@ -83,6 +83,10 @@ class MainWindow(QMainWindow):
             self._on_audio_tracks_snapshot,
             queued_connection,
         )
+        self._player_worker.stream_title_changed.connect(
+            self._on_stream_title_changed,
+            queued_connection,
+        )
         self._player_worker.audio_selection_failed.connect(
             self._on_audio_selection_failed,
             queued_connection,
@@ -92,6 +96,7 @@ class MainWindow(QMainWindow):
         self._mpv_starting = False
         self._pending_channel: Channel | None = None
         self._loading_channel: Channel | None = None
+        self._stream_title = ""
         self._shutdown_requested = False
         self._shutdown_complete = False
         self._audio_restore_attempted = False
@@ -273,7 +278,23 @@ class MainWindow(QMainWindow):
         if self._playlist_path:
             self._preferences.save_resume_channel(self._playlist_path, channel)
             self._preferences.sync()
-        self._status_bar.showMessage(f"Playing: {channel.name}", 2000)
+        self._status_bar.showMessage(
+            self._playback_status_message(),
+            0 if self._stream_title else 2000,
+        )
+
+    def _on_stream_title_changed(self, title: str) -> None:
+        self._stream_title = title
+        if self.current_channel is not None and self._loading_channel is None:
+            self._status_bar.showMessage(self._playback_status_message())
+
+    def _playback_status_message(self) -> str:
+        if self.current_channel is None:
+            return ""
+        message = f"Playing: {self.current_channel.name}"
+        if self._stream_title:
+            message += f" — {self._stream_title}"
+        return message
 
     def _on_channel_failed(self, error: str) -> None:
         self._channel_load_timer.stop()
@@ -377,6 +398,7 @@ class MainWindow(QMainWindow):
     def _play_channel(self, channel: Channel) -> None:
         self._audio_restore_attempted = False
         self._available_audio_tracks = []
+        self._stream_title = ""
         self._pending_channel = channel
         if not self._mpv_started:
             if not self._start_mpv():
