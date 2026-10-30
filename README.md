@@ -1,4 +1,4 @@
-# IPTV Player
+# Open Telly
 
 A simple Windows IPTV desktop client built with Python 3.12+ and PySide6. It loads an Extended M3U playlist, embeds mpv in a Qt window and lets the user switch channels via an overlay list.
 

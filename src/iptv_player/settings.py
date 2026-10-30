@@ -50,7 +50,7 @@ class MpvSettings:
             "--force-window=yes",
             "--keep-open=yes",
             "--no-terminal",
-            "--title=IPTV Player",
+            "--title=Open Telly",
             f"--input-ipc-server=\\\\.\\pipe\\{self.ipc_pipe_name}",
             "--idle=yes",
             "--sid=no",

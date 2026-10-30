@@ -50,7 +50,7 @@ class MainWindow(QMainWindow):
         self._audio_overlay = AudioTrackOverlay(self)
         self._audio_overlay.track_selected.connect(self._on_audio_track_selected)
         self.setCentralWidget(self._video_widget)
-        self.setWindowTitle("IPTV Player")
+        self.setWindowTitle("Open Telly")
         self.resize(1280, 720)
         self.setMouseTracking(True)
         self._status_bar = QStatusBar(self)
@@ -70,20 +70,24 @@ class MainWindow(QMainWindow):
         self.start_player_requested.connect(self._player_worker.start)
         self.load_channel_requested.connect(self._player_worker.load_channel)
         self.stop_player_requested.connect(self._player_worker.stop)
-        self._player_worker.ready.connect(self._on_player_ready, Qt.QueuedConnection)
-        self._player_worker.startup_failed.connect(self._on_player_startup_failed, Qt.QueuedConnection)
-        self._player_worker.channel_loaded.connect(self._on_channel_loaded, Qt.QueuedConnection)
-        self._player_worker.channel_failed.connect(self._on_channel_failed, Qt.QueuedConnection)
-        self._player_worker.audio_tracks_changed.connect(self._on_audio_tracks_changed, Qt.QueuedConnection)
+        queued_connection = Qt.ConnectionType.QueuedConnection
+        self._player_worker.ready.connect(self._on_player_ready, queued_connection)
+        self._player_worker.startup_failed.connect(self._on_player_startup_failed, queued_connection)
+        self._player_worker.channel_loaded.connect(self._on_channel_loaded, queued_connection)
+        self._player_worker.channel_failed.connect(self._on_channel_failed, queued_connection)
+        self._player_worker.audio_tracks_changed.connect(
+            self._on_audio_tracks_changed,
+            queued_connection,
+        )
         self._player_worker.audio_tracks_snapshot.connect(
             self._on_audio_tracks_snapshot,
-            Qt.QueuedConnection,
+            queued_connection,
         )
         self._player_worker.audio_selection_failed.connect(
             self._on_audio_selection_failed,
-            Qt.QueuedConnection,
+            queued_connection,
         )
-        self._player_worker.stopped.connect(self._on_player_stopped, Qt.QueuedConnection)
+        self._player_worker.stopped.connect(self._on_player_stopped, queued_connection)
         self._mpv_started = False
         self._mpv_starting = False
         self._pending_channel: Channel | None = None
@@ -139,14 +143,14 @@ class MainWindow(QMainWindow):
 
         state = self._preferences.window_state()
         state_flags = {
-            "maximized": Qt.WindowMaximized,
-            "minimized": Qt.WindowMinimized,
-            "fullscreen": Qt.WindowFullScreen,
+            "maximized": Qt.WindowState.WindowMaximized,
+            "minimized": Qt.WindowState.WindowMinimized,
+            "fullscreen": Qt.WindowState.WindowFullScreen,
         }
         if state in state_flags:
             self.setWindowState(state_flags[state])
         elif state == "normal":
-            self.setWindowState(Qt.WindowNoState)
+            self.setWindowState(Qt.WindowState.WindowNoState)
 
     @property
     def saved_window_state(self) -> str | None:
@@ -192,7 +196,7 @@ class MainWindow(QMainWindow):
 
     def _save_window_preferences(self) -> None:
         if not self.isMinimized() and not self.isMaximized() and not self.isFullScreen():
-            self._preferences.save_window_geometry(bytes(self.saveGeometry()))
+            self._preferences.save_window_geometry(memoryview(self.saveGeometry().data()).tobytes())
         if self.isMinimized():
             state = "minimized"
         elif self.isMaximized():
@@ -463,7 +467,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.close)
 
     def _on_channel_selected(self, item) -> None:
-        channel = item.data(Qt.UserRole)
+        channel = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(channel, Channel):
             self._play_channel(channel)
             self._overlay.hide_overlay()

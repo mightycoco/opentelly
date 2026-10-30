@@ -20,11 +20,11 @@ class ChannelListWidget(QListWidget):
         self.setObjectName("channel_list")
         self.setAlternatingRowColors(True)
         self.setUniformItemSizes(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollMode(QListWidget.ScrollPerPixel)
-        self.setSelectionMode(QListWidget.SingleSelection)
-        self.setFocusPolicy(Qt.NoFocus)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self._favourite_keys: set[str] = set()
         self.setStyleSheet(
@@ -52,16 +52,16 @@ class ChannelListWidget(QListWidget):
                 if is_favourite
                 else "Click the star or right-click to add to favourites."
             )
-            item.setData(Qt.UserRole, channel)
+            item.setData(Qt.ItemDataRole.UserRole, channel)
             self.addItem(item)
 
     @staticmethod
     def _favourite_icon(favourite: bool) -> QIcon:
         size = 18
         pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.transparent)
+        pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = QPainterPath()
         points = []
         for index in range(10):
@@ -75,20 +75,20 @@ class ChannelListWidget(QListWidget):
             path.lineTo(point)
         path.closeSubpath()
         if favourite:
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor("#ffd54f"))
         else:
             painter.setPen(QColor("#ffd54f"))
-            painter.setBrush(Qt.NoBrush)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(path)
         painter.end()
         return QIcon(pixmap)
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             item = self.itemAt(event.position().toPoint())
             if item is not None and self.visualItemRect(item).left() + 30 >= event.position().x():
-                channel = item.data(Qt.UserRole)
+                channel = item.data(Qt.ItemDataRole.UserRole)
                 if isinstance(channel, Channel):
                     self.favourite_toggle_requested.emit(channel)
                     event.accept()
@@ -99,7 +99,7 @@ class ChannelListWidget(QListWidget):
         item = self.itemAt(position)
         if item is None:
             return
-        channel = item.data(Qt.UserRole)
+        channel = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(channel, Channel):
             return
         menu = QMenu(self)

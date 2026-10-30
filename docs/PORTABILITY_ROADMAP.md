@@ -1,6 +1,6 @@
 # macOS and Linux Portability Roadmap
 
-This document describes the work needed to make IPTV Player available on macOS
+This document describes the work needed to make Open Telly available on macOS
 and Linux while preserving its existing Windows behavior. It is a roadmap, not a
 claim that either platform is currently supported.
 

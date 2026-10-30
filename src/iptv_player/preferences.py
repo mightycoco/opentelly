@@ -23,7 +23,7 @@ class PlayerPreferences:
     """Persistent application preferences backed by Qt settings."""
 
     def __init__(self, settings: QSettings | None = None) -> None:
-        self._settings = settings if settings is not None else QSettings("LMP", "IPTV Player")
+        self._settings = settings if settings is not None else QSettings("LMP", "Open Telly")
 
     def window_geometry(self) -> bytes | None:
         value = self._settings.value("window/geometry")
@@ -40,7 +40,7 @@ class PlayerPreferences:
         self._settings.setValue("window/state", state)
 
     def is_pinned(self) -> bool:
-        return self._settings.value("window/pinned", False, type=bool)
+        return bool(self._settings.value("window/pinned", False, type=bool))
 
     def save_pinned(self, pinned: bool) -> None:
         self._settings.setValue("window/pinned", pinned)
