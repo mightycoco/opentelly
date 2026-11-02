@@ -14,6 +14,9 @@ commits that change to the selected branch, creates the corresponding `vX.Y.Z`
 tag, and publishes a GitHub Release with generated notes. The workflow token
 needs permission to push commits and tags to that branch; repository branch
 protection must allow this or the workflow will fail explicitly.
+To avoid reliance on remotely resolved workflow actions, it checks out the
+selected branch with the runner's Git installation and uses Python 3.12 from
+the Windows runner tool cache.
 
 The repository does not yet build platform installers. Releases therefore use
 GitHub's automatically generated source archives and an additional
