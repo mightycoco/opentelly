@@ -15,7 +15,7 @@ def test_window_resumes_the_saved_channel_for_the_loaded_playlist(tmp_path) -> N
         "#EXTINF:-1,Two\nrtsp://example.com/two\n",
         encoding="utf-8",
     )
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat)
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     preferences = PlayerPreferences(settings)
     preferences.save_resume_channel(
         playlist,
@@ -32,7 +32,7 @@ def test_window_resumes_the_saved_channel_for_the_loaded_playlist(tmp_path) -> N
 def test_window_restores_and_remembers_audio_track_by_channel(tmp_path, monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     channel = Channel(name="News", url="rtsp://example.com/news")
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat)
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     preferences = PlayerPreferences(settings)
     preferences.save_audio_track_id(channel, 2)
     window = MainWindow(preferences=preferences)
@@ -58,11 +58,39 @@ def test_window_restores_and_remembers_audio_track_by_channel(tmp_path, monkeypa
 
 def test_window_shows_stream_title_in_status_bar(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat)
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     window = MainWindow(preferences=PlayerPreferences(settings))
     window.current_channel = Channel(name="News", url="rtsp://example.com/news")
 
     window._on_stream_title_changed("Live bulletin")
 
     assert window.statusBar().currentMessage() == "Playing: News — Live bulletin"
+    window.close()
+
+
+def test_playlist_navigation_wraps_at_both_ends_and_uses_pending_channel(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(preferences=PlayerPreferences(settings))
+    first = Channel(name="First", url="rtsp://example.com/first")
+    second = Channel(name="Second", url="rtsp://example.com/second")
+    third = Channel(name="Third", url="rtsp://example.com/third")
+    window.channels = [first, second, third]
+    requested = []
+    monkeypatch.setattr(window, "_play_channel", requested.append)
+
+    window.current_channel = third
+    window._play_next_channel()
+    assert requested[-1] is first
+
+    window.current_channel = first
+    window._play_previous_channel()
+    assert requested[-1] is third
+
+    window._loading_channel = second
+    window._play_next_channel()
+    assert requested[-1] is third
     window.close()

@@ -9,6 +9,7 @@ A simple Windows IPTV desktop client built with Python 3.12+ and PySide6. It loa
 - Ignore player-specific M3U comments such as `#EXTVLCOPT`
 - Embed mpv into the Qt application window using the native Windows HWND
 - Switch channels with `loadfile` while keeping the same mpv process alive
+- Show previous, stop/play, mute/unmute, and next controls when hovering over the bottom-left video area; channel navigation wraps around the playlist
 - Show an audio-track selector when a channel has multiple audio streams
 - Mark the selected audio track and switch streams from the bottom-right control
 - Remember window placement, maximized/minimized/fullscreen state, and always-on-top preference

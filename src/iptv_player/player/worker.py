@@ -23,6 +23,7 @@ class MpvWorker(QObject):
     audio_tracks_snapshot = Signal(object)
     stream_title_changed = Signal(str)
     audio_selection_failed = Signal(str)
+    playback_control_failed = Signal(str, object, str)
     stopped = Signal()
     mpv_message = Signal(dict)
     _command_failed = Signal(int, str)
@@ -41,6 +42,7 @@ class MpvWorker(QObject):
         self._command_queue: queue.Queue[tuple[int, list[str | int]] | None] = queue.Queue()
         self._audio_request_ids: set[int] = set()
         self._track_query_request_ids: set[int] = set()
+        self._control_request_ids: dict[int, tuple[str, object, str]] = {}
         self._stream_title = ""
         self._started = False
         self._starting = False
@@ -140,6 +142,50 @@ class MpvWorker(QObject):
         self._audio_request_ids.add(request_id)
         self._command_queue.put((request_id, ["set_property", "aid", track_id]))
 
+    @Slot()
+    def stop_playback(self) -> None:
+        self._queue_control_command(["stop"], "stopped", True, "stop playback")
+
+    @Slot(bool)
+    def set_muted(self, muted: bool) -> None:
+        action = "mute" if muted else "unmute"
+        self._queue_control_command(
+            ["set_property", "mute", muted],
+            "muted",
+            muted,
+            action,
+        )
+
+    def _queue_control_command(
+        self,
+        command: list[str | int],
+        operation: str,
+        value: object,
+        description: str,
+    ) -> None:
+        with self._state_lock:
+            if not self._started or self._shutdown_requested:
+                self.playback_control_failed.emit(
+                    operation,
+                    value,
+                    f"mpv is not ready to {description}",
+                )
+                return
+
+        try:
+            request_id = self._process.reserve_request_id()
+        except Exception as exc:
+            logger.exception("Failed to reserve an mpv request to %s", description)
+            self.playback_control_failed.emit(
+                operation,
+                value,
+                f"Unable to {description}: {exc}",
+            )
+            return
+
+        self._control_request_ids[request_id] = (operation, value, description)
+        self._command_queue.put((request_id, command))
+
     def _send_channel_commands(self) -> None:
         while True:
             command = self._command_queue.get()
@@ -154,7 +200,15 @@ class MpvWorker(QObject):
 
     @Slot(int, str)
     def _on_command_failed(self, request_id: int, error: str) -> None:
-        if request_id in self._audio_request_ids:
+        control = self._control_request_ids.pop(request_id, None)
+        if control is not None:
+            operation, value, description = control
+            self.playback_control_failed.emit(
+                operation,
+                value,
+                f"Could not {description}: {error}",
+            )
+        elif request_id in self._audio_request_ids:
             self._audio_request_ids.discard(request_id)
             self.audio_selection_failed.emit(f"Could not select audio track: {error}")
         else:
@@ -194,6 +248,16 @@ class MpvWorker(QObject):
             self._track_query_request_ids.discard(request_id)
             if message.get("error") == "success":
                 self.audio_tracks_snapshot.emit(self._parse_audio_tracks(message.get("data")))
+
+        if request_id in self._control_request_ids:
+            operation, value, description = self._control_request_ids.pop(request_id)
+            error = message.get("error")
+            if error and error != "success":
+                self.playback_control_failed.emit(
+                    operation,
+                    value,
+                    f"Could not {description}: {error}",
+                )
 
         event = message.get("event")
         if event == "property-change" and message.get("name") == "track-list":
@@ -332,6 +396,7 @@ class MpvWorker(QObject):
         self._channels_by_playlist_id.clear()
         self._audio_request_ids.clear()
         self._track_query_request_ids.clear()
+        self._control_request_ids.clear()
         self.audio_tracks_changed.emit([])
         self.audio_tracks_snapshot.emit([])
         self._pending_channel = None

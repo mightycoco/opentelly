@@ -106,6 +106,14 @@ def test_player_startup_playback_and_exit_do_not_block_the_gui_thread(monkeypatc
     monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: cursor_position))
     window._last_cursor_position = cursor_position - QPoint(1, 0)
     window._check_cursor_position()
+    assert not window._overlay.isVisible()
+
+    playlist_position = window._video_widget.mapToGlobal(
+        QPoint(window._video_widget.width() - 30, 30)
+    )
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: playlist_position))
+    window._last_cursor_position = playlist_position - QPoint(1, 0)
+    window._check_cursor_position()
     assert window._overlay.isVisible()
 
     overlay_position = window._overlay.mapToGlobal(QPoint(10, 10))
@@ -116,8 +124,12 @@ def test_player_startup_playback_and_exit_do_not_block_the_gui_thread(monkeypatc
     window._hide_overlay_if_cursor_outside()
     assert window._overlay.isVisible()
 
-    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: cursor_position))
-    window._hide_overlay_if_cursor_outside()
+    away_position = window._video_widget.mapToGlobal(
+        QPoint(window._video_widget.width() // 2, window._video_widget.height() // 2)
+    )
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: away_position))
+    window._last_cursor_position = away_position - QPoint(1, 0)
+    window._check_cursor_position()
     assert not window._overlay.isVisible()
 
     exit_action = next(action for action in window.findChildren(QAction) if action.text() == "E&xit")

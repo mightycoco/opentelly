@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMenu, QMessageBox, QStatusBar
 
@@ -14,6 +14,7 @@ from iptv_player.channel_overlay import ChannelOverlay
 from iptv_player.models import AudioTrack, Channel
 from iptv_player.player.mpv_process import MpvProcess
 from iptv_player.player.worker import MpvWorker
+from iptv_player.playback_control_bar import PlaybackControlBar
 from iptv_player.preferences import PlayerPreferences, channel_key
 from iptv_player.playlist.m3u_parser import parse_m3u_playlist
 from iptv_player.settings import MpvSettings
@@ -49,6 +50,11 @@ class MainWindow(QMainWindow):
         self._overlay.update_channels([], self._favourites)
         self._audio_overlay = AudioTrackOverlay(self)
         self._audio_overlay.track_selected.connect(self._on_audio_track_selected)
+        self._playback_controls = PlaybackControlBar(self)
+        self._playback_controls.previous_requested.connect(self._play_previous_channel)
+        self._playback_controls.stop_play_requested.connect(self._toggle_playback_stopped)
+        self._playback_controls.mute_toggled.connect(self._set_muted)
+        self._playback_controls.next_requested.connect(self._play_next_channel)
         self.setCentralWidget(self._video_widget)
         self.setWindowTitle("Open Telly")
         self.resize(1280, 720)
@@ -91,12 +97,18 @@ class MainWindow(QMainWindow):
             self._on_audio_selection_failed,
             queued_connection,
         )
+        self._player_worker.playback_control_failed.connect(
+            self._on_playback_control_failed,
+            queued_connection,
+        )
         self._player_worker.stopped.connect(self._on_player_stopped, queued_connection)
         self._mpv_started = False
         self._mpv_starting = False
         self._pending_channel: Channel | None = None
         self._loading_channel: Channel | None = None
         self._stream_title = ""
+        self._playback_stopped = False
+        self._muted = False
         self._shutdown_requested = False
         self._shutdown_complete = False
         self._audio_restore_attempted = False
@@ -107,6 +119,7 @@ class MainWindow(QMainWindow):
         self._cursor_timer.setInterval(100)
         self._cursor_timer.timeout.connect(self._check_cursor_position)
         self._cursor_timer.start()
+        self._update_playback_control_state()
 
         if self._playlist_path and self._playlist_path.exists():
             self.load_playlist(self._playlist_path)
@@ -259,6 +272,7 @@ class MainWindow(QMainWindow):
     def _on_player_ready(self) -> None:
         self._mpv_starting = False
         self._mpv_started = True
+        self._update_playback_control_state()
         self._status_bar.showMessage("mpv ready", 2000)
         if self._pending_channel is not None:
             channel = self._pending_channel
@@ -274,6 +288,9 @@ class MainWindow(QMainWindow):
         self._channel_load_timer.stop()
         self._loading_channel = None
         self.current_channel = channel
+        self._playback_stopped = False
+        self._playback_controls.set_playback_stopped(False)
+        self._update_playback_control_state()
         self._audio_restore_attempted = False
         if self._playlist_path:
             self._preferences.save_resume_channel(self._playlist_path, channel)
@@ -299,6 +316,7 @@ class MainWindow(QMainWindow):
     def _on_channel_failed(self, error: str) -> None:
         self._channel_load_timer.stop()
         self._loading_channel = None
+        self._update_playback_control_state()
         logger.error("%s", error)
         self._status_bar.showMessage(error, 15000)
 
@@ -350,6 +368,7 @@ class MainWindow(QMainWindow):
     def _on_channel_load_timeout(self) -> None:
         channel_name = self._loading_channel.name if self._loading_channel else "channel"
         self._loading_channel = None
+        self._update_playback_control_state()
         message = f"Timed out while loading {channel_name}. Check the stream and RTSP transport."
         logger.error("%s", message)
         self._status_bar.showMessage(message, 15000)
@@ -373,6 +392,7 @@ class MainWindow(QMainWindow):
             self.channels[0] if self.channels else None,
         )
         self._overlay.update_channels(self.channels, self._favourites)
+        self._update_playback_control_state()
         self._status_bar.showMessage(f"Loaded {len(self.channels)} channel(s)", 2500)
         if self.channels and self.isVisible():
             self._play_channel(self._initial_channel or self.channels[0])
@@ -399,7 +419,10 @@ class MainWindow(QMainWindow):
         self._audio_restore_attempted = False
         self._available_audio_tracks = []
         self._stream_title = ""
+        self._playback_stopped = False
+        self._playback_controls.set_playback_stopped(False)
         self._pending_channel = channel
+        self._update_playback_control_state()
         if not self._mpv_started:
             if not self._start_mpv():
                 self._pending_channel = None
@@ -411,6 +434,68 @@ class MainWindow(QMainWindow):
         self.load_channel_requested.emit(channel)
         self._channel_load_timer.start()
         self._status_bar.showMessage(f"Loading: {channel.name}")
+
+    def _play_previous_channel(self) -> None:
+        self._navigate_playlist(-1)
+
+    def _play_next_channel(self) -> None:
+        self._navigate_playlist(1)
+
+    def _navigate_playlist(self, offset: int) -> None:
+        if not self.channels:
+            return
+        selected_channel = self._loading_channel or self.current_channel
+        selected_index = next(
+            (
+                index
+                for index, channel in enumerate(self.channels)
+                if selected_channel is not None
+                and channel_key(channel) == channel_key(selected_channel)
+            ),
+            None,
+        )
+        if selected_index is None:
+            selected_index = -1 if offset > 0 else 0
+        channel = self.channels[(selected_index + offset) % len(self.channels)]
+        self._play_channel(channel)
+
+    def _toggle_playback_stopped(self) -> None:
+        if self._playback_stopped:
+            channel = self._loading_channel or self.current_channel
+            if channel is not None:
+                self._play_channel(channel)
+            return
+        if self.current_channel is None or not self._mpv_started:
+            return
+        self._playback_stopped = True
+        self._playback_controls.set_playback_stopped(True)
+        self._player_worker.stop_playback()
+
+    def _set_muted(self, muted: bool) -> None:
+        self._muted = muted
+        self._player_worker.set_muted(muted)
+
+    def _on_playback_control_failed(
+        self,
+        operation: str,
+        value: object,
+        error: str,
+    ) -> None:
+        logger.error("%s", error)
+        self._status_bar.showMessage(error, 15000)
+        if operation == "stopped" and self._playback_stopped is value:
+            self._playback_stopped = not self._playback_stopped
+            self._playback_controls.set_playback_stopped(self._playback_stopped)
+        elif operation == "muted" and self._playback_controls.is_muted is value:
+            self._muted = not self._muted
+            self._playback_controls.set_muted(self._muted)
+
+    def _update_playback_control_state(self) -> None:
+        self._playback_controls.set_navigation_enabled(bool(self.channels))
+        self._playback_controls.set_playback_enabled(
+            self._mpv_started
+            and (self.current_channel is not None or self._loading_channel is not None)
+        )
 
     def mouseMoveEvent(self, event) -> None:
         self._show_channels_for_mouse_movement()
@@ -429,9 +514,33 @@ class MainWindow(QMainWindow):
         self._last_cursor_position = cursor_position
 
         video_position = self._video_widget.mapFromGlobal(cursor_position)
-        if self._video_widget.rect().contains(video_position):
-            self._show_channels_for_mouse_movement()
-        elif self._overlay.isVisible() and self._overlay.geometry().contains(cursor_position):
+        cursor_in_video = self._video_widget.rect().contains(video_position)
+        cursor_in_controls = (
+            self._playback_controls.isVisible()
+            and self._playback_controls.geometry().contains(cursor_position)
+        )
+        if cursor_in_video:
+            if self._playlist_hover_area().contains(video_position):
+                self._show_channels_for_mouse_movement()
+            else:
+                self._hide_timer.stop()
+                self._overlay.hide_overlay()
+        control_hover_area = QRect(
+            0,
+            self._video_widget.height() - 96,
+            self._playback_controls.width() + 36,
+            96,
+        )
+        if cursor_in_video and control_hover_area.contains(video_position):
+            self._playback_controls.position_overlay()
+            self._playback_controls.raise_()
+            self._playback_controls.show()
+        elif not cursor_in_controls:
+            self._playback_controls.hide()
+
+        if cursor_in_video:
+            return
+        if self._overlay.isVisible() and self._overlay.geometry().contains(cursor_position):
             self._hide_timer.stop()
         else:
             self._hide_timer.stop()
@@ -445,14 +554,27 @@ class MainWindow(QMainWindow):
     def _show_channels_for_mouse_movement(self) -> None:
         if (not self.channels and not self._favourites) or self._shutdown_requested:
             return
+        if not self._playlist_hover_area().contains(
+            self._video_widget.mapFromGlobal(QCursor.pos())
+        ):
+            return
         self._overlay.show_overlay()
         self._hide_timer.start(1500)
+
+    def _playlist_hover_area(self) -> QRect:
+        self._overlay.position_overlay()
+        overlay_position = self._video_widget.mapFromGlobal(
+            self._overlay.geometry().topLeft()
+        )
+        return QRect(overlay_position, self._overlay.size())
 
     def resizeEvent(self, event) -> None:
         if self._overlay.isVisible():
             self._overlay.position_overlay()
         if self._audio_overlay.isVisible():
             self._audio_overlay.position_overlay()
+        if self._playback_controls.isVisible():
+            self._playback_controls.position_overlay()
         super().resizeEvent(event)
 
     def closeEvent(self, event) -> None:
@@ -463,6 +585,7 @@ class MainWindow(QMainWindow):
                 self._cursor_timer.stop()
                 self._hide_timer.stop()
                 self._audio_overlay.hide()
+                self._playback_controls.hide()
                 self.stop_player_requested.emit()
             return
         self._save_window_preferences()

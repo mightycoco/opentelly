@@ -235,3 +235,30 @@ def test_worker_refreshes_track_list_after_audio_selection() -> None:
     while len(process.commands) < 2 and time.monotonic() < deadline:
         time.sleep(0.01)
     assert process.commands[-1][0] == ["get_property", "track-list"]
+
+
+def test_worker_queues_stop_and_mute_commands_and_reports_control_errors() -> None:
+    process = FakeMpvProcess()
+    worker = ready_worker(process)
+    failures = QSignalSpy(worker.playback_control_failed)
+
+    worker.stop_playback()
+    worker.set_muted(True)
+    deadline = time.monotonic() + 1
+    while len(process.commands) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert [command for command, _ in process.commands] == [
+        ["stop"],
+        ["set_property", "mute", True],
+    ]
+    stop_request_id = process.commands[0][1]
+    worker._handle_mpv_message(
+        {"request_id": stop_request_id, "error": "command unavailable"}
+    )
+    assert failures.count() == 1
+    assert failures.at(0) == [
+        "stopped",
+        True,
+        "Could not stop playback: command unavailable",
+    ]
