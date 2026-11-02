@@ -160,7 +160,7 @@ def test_windows_loader_discovers_library_in_winget_package(monkeypatch, tmp_pat
 
     monkeypatch.setattr(ctypes, "WinDLL", load, raising=False)
     backend = LibMpvBackend(settings=MpvSettings(executable="missing-mpv"))
-    backend._load_library()
+    backend.load_library()
 
     assert backend.library_path == str(library_path)
     assert backend._library is library
@@ -204,8 +204,31 @@ def test_backend_factory_selects_libmpv_by_default(
     expected_type,
 ) -> None:
     monkeypatch.setenv("OPEN_TELLY_BACKEND", backend_name)
+    monkeypatch.setattr(LibMpvBackend, "load_library", lambda self: None)
 
     assert isinstance(create_mpv_backend(), expected_type)
+
+
+def test_backend_factory_falls_back_to_process_when_libmpv_is_unavailable(
+    monkeypatch,
+) -> None:
+    from iptv_player.player.mpv_process import MpvProcess
+
+    monkeypatch.delenv("OPEN_TELLY_BACKEND", raising=False)
+
+    def unavailable(self) -> None:
+        raise RuntimeError("shared library missing")
+
+    monkeypatch.setattr(LibMpvBackend, "load_library", unavailable)
+
+    assert isinstance(create_mpv_backend(), MpvProcess)
+
+
+def test_backend_factory_does_not_override_explicit_libmpv_selection(monkeypatch) -> None:
+    monkeypatch.setenv("OPEN_TELLY_BACKEND", "libmpv")
+    backend = create_mpv_backend()
+
+    assert isinstance(backend, LibMpvBackend)
 
 
 def test_backend_factory_retains_explicit_process_fallback(monkeypatch) -> None:

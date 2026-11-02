@@ -28,19 +28,23 @@ A simple Windows IPTV desktop client built with Python 3.12+ and PySide6. It loa
 
 - Python 3.12 or newer recommended
 - Windows 10 or 11 (64-bit)
-- The mpv shared library (`mpv-2.dll` or `libmpv-2.dll`) for the default libmpv backend
+- mpv installed; if libmpv is available, Open Telly uses the shared-library
+  backend, otherwise it automatically uses `mpv.exe`
 - PySide6 dependencies installed via `pip`
 
-## Install libmpv on Windows
+## Install mpv on Windows
 
-Install an mpv build that includes the shared library, for example:
+Install mpv, for example:
 
 ```powershell
 winget install --id=shinchiro.mpv --source winget
 ```
 
-If Open Telly cannot find the library automatically, locate it and set
-`MPV_LIBRARY` to its full path before starting the application:
+Open Telly uses libmpv when its shared library (`mpv-2.dll` or
+`libmpv-2.dll`) is installed, and automatically falls back to the mpv process
+when the DLL is absent. Some mpv distributions, including the Winget package,
+only contain `mpv.exe`. If you have a separate libmpv DLL, set `MPV_LIBRARY`
+to its full path to use it:
 
 ```powershell
 $mpvLibrary = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" `
@@ -50,10 +54,10 @@ $env:MPV_LIBRARY = $mpvLibrary
 python main.py
 ```
 
-The environment variable applies to the current PowerShell session. To use the
-legacy mpv process backend instead, set `OPEN_TELLY_BACKEND=process`; that
-backend requires `mpv.exe` to be on `PATH` or its location to be configured in
-`MpvSettings(executable=...)`.
+The environment variable applies to the current PowerShell session. Backend
+selection can be overridden with `OPEN_TELLY_BACKEND=libmpv` or
+`OPEN_TELLY_BACKEND=process`; the process backend locates mpv on `PATH` or in
+the standard Winget installation folder.
 
 ## Setup
 

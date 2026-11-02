@@ -156,7 +156,7 @@ class LibMpvBackend:
             "lavf",
         }:
             raise ValueError(f"Unsupported RTSP transport: {self.settings.rtsp_transport}")
-        self._load_library()
+        self.load_library()
         self._configure_functions()
         handle = self._library.mpv_create()
         if not handle:
@@ -227,7 +227,7 @@ class LibMpvBackend:
             self._handle = ctypes.c_void_p()
             raise
 
-    def _load_library(self) -> None:
+    def load_library(self) -> None:
         if self._library is not None:
             return
         candidates = [self.library_path] if self.library_path else []

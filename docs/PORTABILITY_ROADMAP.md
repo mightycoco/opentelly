@@ -7,12 +7,13 @@ claim that either platform is currently supported.
 ## Implementation status
 
 The worker consumes the `MpvBackend` protocol, and both the subprocess adapter
-and an initial libmpv backend implement it. The libmpv backend is selected by
-default and uses a Qt OpenGL widget; set `OPEN_TELLY_BACKEND=process` to select
-the legacy subprocess backend. This is an initial implementation, not a
-validated cross-platform renderer: native libmpv playback, rendering, and
-shutdown still need runtime testing before the migration can be considered
-complete. The subprocess backend remains available for Windows fallback.
+and an initial libmpv backend implement it. The app prefers libmpv when its
+shared library is available and falls back to the mpv subprocess otherwise;
+`OPEN_TELLY_BACKEND=libmpv` and `OPEN_TELLY_BACKEND=process` force a backend.
+The libmpv implementation uses a Qt OpenGL widget. This is an initial
+implementation, not a validated cross-platform renderer: native libmpv
+playback, rendering, and shutdown still need runtime testing before the
+migration can be considered complete.
 
 ## Current platform-specific constraints
 
