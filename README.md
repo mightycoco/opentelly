@@ -28,13 +28,13 @@ A simple Windows IPTV desktop client built with Python 3.12+ and PySide6. It loa
 
 - Python 3.12 or newer recommended
 - Windows 10 or 11 (64-bit)
-- mpv installed; if libmpv is available, Open Telly uses the shared-library
-  backend, otherwise it automatically uses `mpv.exe`
+- An mpv runtime; the release source ZIP includes libmpv, while a plain source
+  checkout uses an installed libmpv or `mpv.exe`
 - PySide6 dependencies installed via `pip`
 
 ## Install mpv on Windows
 
-Install mpv, for example:
+For a plain source checkout, install mpv, for example:
 
 ```powershell
 winget install --id=shinchiro.mpv --source winget
@@ -44,15 +44,8 @@ Open Telly uses libmpv when its shared library (`mpv-2.dll` or
 `libmpv-2.dll`) is installed, and automatically falls back to the mpv process
 when the DLL is absent. Some mpv distributions, including the Winget package,
 only contain `mpv.exe`. If you have a separate libmpv DLL, set `MPV_LIBRARY`
-to its full path to use it:
-
-```powershell
-$mpvLibrary = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" `
-  -Include mpv-2.dll,libmpv-2.dll -File -Recurse |
-  Select-Object -First 1 -ExpandProperty FullName
-$env:MPV_LIBRARY = $mpvLibrary
-python main.py
-```
+to its full path to use it. The release source ZIP includes an LGPL-labelled
+libmpv runtime under `runtime/`, which is discovered automatically.
 
 The environment variable applies to the current PowerShell session. Backend
 selection can be overridden with `OPEN_TELLY_BACKEND=libmpv` or
@@ -98,6 +91,8 @@ pytest
 
 See [docs/RELEASING.md](docs/RELEASING.md) for the manual GitHub Actions release
 workflow and selectable semantic-version increments.
+The source bundle and its mpv licensing/provenance notes are described in
+[docs/MPV_RUNTIME_DISTRIBUTION.md](docs/MPV_RUNTIME_DISTRIBUTION.md).
 
 ## Notes
 

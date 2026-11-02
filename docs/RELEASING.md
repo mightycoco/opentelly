@@ -16,5 +16,10 @@ needs permission to push commits and tags to that branch; repository branch
 protection must allow this or the workflow will fail explicitly.
 
 The repository does not yet build platform installers. Releases therefore use
-GitHub's automatically generated source archives and do not claim to be
-standalone application packages.
+GitHub's automatically generated source archives and an additional
+`OpenTelly-X.Y.Z-source.zip`. The latter contains the Python sources and the
+verified, replaceable LGPL-labelled libmpv runtime with its notices,
+provenance, and source archives. It is still a source distribution and
+requires Python dependencies to be installed; it is not a standalone
+application installer. See [MPV_RUNTIME_DISTRIBUTION.md](MPV_RUNTIME_DISTRIBUTION.md)
+for the upstream build's licensing caveats.

@@ -1,4 +1,5 @@
 import ctypes
+import sys
 import time
 
 import pytest
@@ -164,6 +165,36 @@ def test_windows_loader_discovers_library_in_winget_package(monkeypatch, tmp_pat
 
     assert backend.library_path == str(library_path)
     assert backend._library is library
+
+
+def test_windows_loader_discovers_bundled_runtime_directory(monkeypatch, tmp_path) -> None:
+    application_directory = tmp_path / "application"
+    library_path = application_directory / "runtime" / "bin" / "libmpv-2.dll"
+    library_path.parent.mkdir(parents=True)
+    library_path.touch()
+    library = FakeLibrary()
+    dll_search_directories = []
+    monkeypatch.setattr("iptv_player.player.libmpv.os.name", "nt")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(application_directory / "OpenTelly.exe"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "no-winget"))
+    monkeypatch.setattr(
+        "iptv_player.player.libmpv.os.add_dll_directory",
+        lambda path: dll_search_directories.append(str(path)) or object(),
+        raising=False,
+    )
+
+    def load(candidate: str):
+        if candidate == str(library_path):
+            return library
+        raise OSError(f"not found: {candidate}")
+
+    monkeypatch.setattr(ctypes, "WinDLL", load, raising=False)
+    backend = LibMpvBackend(settings=MpvSettings(executable="missing-mpv"))
+    backend.load_library()
+
+    assert backend.library_path == str(library_path)
+    assert str(library_path.parent) in dll_search_directories
 
 
 def test_libmpv_backend_applies_extra_command_line_options() -> None:

@@ -68,6 +68,44 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=v$version" >> $env:GITHUB_OUTPUT
 
+      - name: Install 7-Zip
+        shell: pwsh
+        run: |
+          choco install 7zip.install --yes --no-progress
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not install 7-Zip for the mpv runtime archive"
+          }
+
+      - name: Download and verify LGPL libmpv runtime
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          if (-not (Test-Path $sevenZip)) {
+            throw "7-Zip was not installed at $sevenZip"
+          }
+          ./scripts/fetch_mpv_runtime.ps1 `
+            -RuntimeDirectory "$env:RUNNER_TEMP\mpv-runtime" `
+            -SevenZipPath $sevenZip
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not stage the verified LGPL libmpv runtime"
+          }
+
+      - name: Package source and runtime
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          python scripts/package_source.py `
+            --runtime-dir "$env:RUNNER_TEMP\mpv-runtime" `
+            --output "dist/OpenTelly-$env:RELEASE_VERSION-source.zip" `
+            --version $env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not create the Open Telly source distribution"
+          }
+
       - name: Commit version and create tag
         shell: pwsh
         env:
@@ -106,4 +144,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: gh release create $env:RELEASE_TAG --title "Open Telly $env:RELEASE_VERSION" --generate-notes --verify-tag
+        run: gh release create $env:RELEASE_TAG --title "Open Telly $env:RELEASE_VERSION" --generate-notes --verify-tag "dist/OpenTelly-$env:RELEASE_VERSION-source.zip"

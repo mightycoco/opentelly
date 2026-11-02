@@ -6,6 +6,7 @@ import itertools
 import logging
 import os
 from pathlib import Path
+import sys
 import threading
 from typing import Any
 
@@ -128,7 +129,7 @@ class LibMpvBackend:
     ) -> None:
         self.settings = settings or MpvSettings()
         self.library_path = library_path or os.environ.get("MPV_LIBRARY")
-        self._library = library
+        self._library: ctypes.CDLL | None = library
         self._handle = ctypes.c_void_p()
         self._render_context = ctypes.c_void_p()
         self._callbacks: list[MpvEventCallback] = []
@@ -136,11 +137,12 @@ class LibMpvBackend:
         self._request_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._event_thread: threading.Thread | None = None
-        self._get_proc_callback: _GetProcAddress | None = None
+        self._get_proc_callback: Any | None = None
         self._render_update_callback: Any | None = None
         self._render_widget: Any | None = None
         self._render_lock = threading.Lock()
         self._initialized = False
+        self._dll_directory_handles: dict[str, Any] = {}
 
     def add_callback(self, callback: MpvEventCallback) -> None:
         self._callbacks.append(callback)
@@ -158,7 +160,8 @@ class LibMpvBackend:
             raise ValueError(f"Unsupported RTSP transport: {self.settings.rtsp_transport}")
         self.load_library()
         self._configure_functions()
-        handle = self._library.mpv_create()
+        library = self._require_library()
+        handle = library.mpv_create()
         if not handle:
             raise RuntimeError("libmpv could not create a player handle")
         self._handle = ctypes.c_void_p(handle)
@@ -174,7 +177,7 @@ class LibMpvBackend:
             }
             for name, value in options.items():
                 self._check(
-                    self._library.mpv_set_option_string(
+                    library.mpv_set_option_string(
                         self._handle,
                         name.encode("utf-8"),
                         value.encode("utf-8"),
@@ -206,14 +209,14 @@ class LibMpvBackend:
                     else:
                         value = "yes"
                 self._check(
-                    self._library.mpv_set_option_string(
+                    library.mpv_set_option_string(
                         self._handle,
                         name.encode("utf-8"),
                         value.encode("utf-8"),
                     ),
                     f"set mpv option {name}",
                 )
-            self._check(self._library.mpv_initialize(self._handle), "initialize libmpv")
+            self._check(library.mpv_initialize(self._handle), "initialize libmpv")
             self._initialized = True
             self._stop_event.clear()
             self._event_thread = threading.Thread(
@@ -223,7 +226,7 @@ class LibMpvBackend:
             )
             self._event_thread.start()
         except Exception:
-            self._library.mpv_terminate_destroy(self._handle)
+            library.mpv_terminate_destroy(self._handle)
             self._handle = ctypes.c_void_p()
             raise
 
@@ -233,6 +236,20 @@ class LibMpvBackend:
         candidates = [self.library_path] if self.library_path else []
         if os.name == "nt":
             candidates.extend(("mpv-2.dll", "libmpv-2.dll"))
+            application_root = (
+                Path(sys.executable).resolve().parent
+                if getattr(sys, "frozen", False)
+                else Path(__file__).resolve().parents[3]
+            )
+            runtime_directory = application_root / "runtime"
+            if runtime_directory.is_dir():
+                for dynamic_library in runtime_directory.rglob("*.dll"):
+                    self._add_dll_search_directory(dynamic_library.parent)
+                candidates.extend(
+                    str(path)
+                    for library_name in ("mpv-2.dll", "libmpv-2.dll")
+                    for path in runtime_directory.rglob(library_name)
+                )
             local_app_data = os.environ.get("LOCALAPPDATA")
             if local_app_data:
                 winget_packages = Path(local_app_data) / "Microsoft" / "WinGet" / "Packages"
@@ -261,6 +278,8 @@ class LibMpvBackend:
             if not candidate:
                 continue
             try:
+                if os.name == "nt" and os.path.isabs(candidate):
+                    self._add_dll_search_directory(Path(candidate).parent)
                 self._library = load(candidate)
                 self.library_path = candidate
                 return
@@ -274,7 +293,17 @@ class LibMpvBackend:
             f"MPV_LIBRARY to its full path ({details})"
         )
 
+    def _add_dll_search_directory(self, directory: Path) -> None:
+        if not hasattr(os, "add_dll_directory"):
+            return
+        resolved_directory = directory.resolve()
+        key = str(resolved_directory).casefold()
+        if key in self._dll_directory_handles:
+            return
+        self._dll_directory_handles[key] = os.add_dll_directory(str(resolved_directory))
+
     def _configure_functions(self) -> None:
+        library = self._require_library()
         signatures = {
             "mpv_create": (ctypes.c_void_p, []),
             "mpv_set_option_string": (
@@ -339,7 +368,7 @@ class LibMpvBackend:
             "mpv_render_context_free": (None, [ctypes.c_void_p]),
         }
         for name, (restype, argtypes) in signatures.items():
-            function = getattr(self._library, name)
+            function = getattr(library, name)
             function.restype = restype
             function.argtypes = argtypes
 
@@ -349,8 +378,9 @@ class LibMpvBackend:
 
     def observe_property(self, property_name: str, observer_id: int) -> int:
         self._require_started()
+        library = self._require_library()
         return self._check(
-            self._library.mpv_observe_property(
+            library.mpv_observe_property(
                 self._handle,
                 observer_id,
                 property_name.encode("utf-8"),
@@ -363,9 +393,10 @@ class LibMpvBackend:
         return self._command(request_id, "loadfile", channel.url, "replace")
 
     def select_audio_track(self, track_id: int, request_id: int) -> int:
+        library = self._require_library()
         value = ctypes.c_int64(track_id)
         return self._check(
-            self._library.mpv_set_property_async(
+            library.mpv_set_property_async(
                 self._handle,
                 request_id,
                 b"aid",
@@ -379,9 +410,10 @@ class LibMpvBackend:
         return self._command(request_id, "stop")
 
     def set_muted(self, muted: bool, request_id: int) -> int:
+        library = self._require_library()
         value = ctypes.c_int(int(muted))
         return self._check(
-            self._library.mpv_set_property_async(
+            library.mpv_set_property_async(
                 self._handle,
                 request_id,
                 b"mute",
@@ -392,8 +424,9 @@ class LibMpvBackend:
         )
 
     def get_audio_tracks(self, request_id: int) -> int:
+        library = self._require_library()
         return self._check(
-            self._library.mpv_get_property_async(
+            library.mpv_get_property_async(
                 self._handle,
                 request_id,
                 b"track-list",
@@ -404,10 +437,11 @@ class LibMpvBackend:
 
     def _command(self, request_id: int, *arguments: str) -> int:
         self._require_started()
+        library = self._require_library()
         encoded = [argument.encode("utf-8") for argument in arguments]
         command = (ctypes.c_char_p * (len(encoded) + 1))(*encoded, None)
         return self._check(
-            self._library.mpv_command_async(
+            library.mpv_command_async(
                 self._handle,
                 request_id,
                 command,
@@ -416,8 +450,9 @@ class LibMpvBackend:
         )
 
     def _event_loop(self) -> None:
+        library = self._require_library()
         while not self._stop_event.is_set():
-            event_pointer = self._library.mpv_wait_event(self._handle, 0.1)
+            event_pointer = library.mpv_wait_event(self._handle, 0.1)
             if not event_pointer:
                 continue
             event = event_pointer.contents
@@ -535,6 +570,7 @@ class LibMpvBackend:
 
     def attach_renderer(self, widget: Any) -> None:
         self._require_started()
+        library = self._require_library()
         if self._render_context:
             raise RuntimeError("The libmpv render context is already attached")
         widget.makeCurrent()
@@ -554,7 +590,7 @@ class LibMpvBackend:
                 _MpvRenderParam(_MPV_RENDER_PARAM_INVALID, None),
             )
             self._check(
-                self._library.mpv_render_context_create(
+                library.mpv_render_context_create(
                     ctypes.byref(self._render_context),
                     self._handle,
                     parameters,
@@ -570,14 +606,14 @@ class LibMpvBackend:
             self._render_update_callback = update_callback
             self._get_proc_callback = get_proc_address
             self._render_widget = widget
-            self._library.mpv_render_context_set_update_callback(
+            library.mpv_render_context_set_update_callback(
                 self._render_context,
                 ctypes.cast(update_callback, ctypes.c_void_p),
                 None,
             )
         except Exception:
             if self._render_context:
-                self._library.mpv_render_context_free(self._render_context)
+                library.mpv_render_context_free(self._render_context)
                 self._render_context = ctypes.c_void_p()
             raise
         finally:
@@ -588,7 +624,7 @@ class LibMpvBackend:
         context = QOpenGLContext.currentContext()
         if context is None:
             return None
-        function = context.getProcAddress(name.decode("ascii"))
+        function = context.getProcAddress(name)
         if not function:
             return None
         try:
@@ -603,6 +639,7 @@ class LibMpvBackend:
     def render(self, framebuffer: int, width: int, height: int) -> None:
         if not self._render_context:
             return
+        library = self._require_library()
         with self._render_lock:
             fbo = _MpvOpenGLFbo(framebuffer, max(width, 1), max(height, 1), 0)
             flip_y = ctypes.c_int(1)
@@ -617,7 +654,7 @@ class LibMpvBackend:
                 ),
                 _MpvRenderParam(_MPV_RENDER_PARAM_INVALID, None),
             )
-            result = self._library.mpv_render_context_render(
+            result = library.mpv_render_context_render(
                 self._render_context,
                 parameters,
             )
@@ -627,15 +664,16 @@ class LibMpvBackend:
     def detach_renderer(self, widget: Any) -> None:
         if not self._render_context:
             return
+        library = self._require_library()
         with self._render_lock:
             widget.makeCurrent()
             try:
-                self._library.mpv_render_context_set_update_callback(
+                library.mpv_render_context_set_update_callback(
                     self._render_context,
                     None,
                     None,
                 )
-                self._library.mpv_render_context_free(self._render_context)
+                library.mpv_render_context_free(self._render_context)
                 self._render_context = ctypes.c_void_p()
                 self._render_update_callback = None
                 self._get_proc_callback = None
@@ -646,13 +684,14 @@ class LibMpvBackend:
     def stop(self) -> None:
         if not self._initialized:
             return
+        library = self._require_library()
         self._stop_event.set()
         event_thread = self._event_thread
         if event_thread is not None and event_thread is not threading.current_thread():
             event_thread.join(timeout=3)
             if event_thread.is_alive():
                 logger.warning("libmpv event thread did not stop before timeout")
-        self._library.mpv_terminate_destroy(self._handle)
+        library.mpv_terminate_destroy(self._handle)
         self._handle = ctypes.c_void_p()
         self._initialized = False
         self._event_thread = None
@@ -661,6 +700,11 @@ class LibMpvBackend:
         if not self._initialized or not self._handle:
             raise RuntimeError("libmpv is not initialized")
 
+    def _require_library(self) -> ctypes.CDLL:
+        if self._library is None:
+            raise RuntimeError("libmpv library is not loaded")
+        return self._library
+
     def _check(self, result: int, action: str) -> int:
         if result < 0:
             raise RuntimeError(f"Could not {action}: {self._error_string(result)}")
@@ -668,7 +712,7 @@ class LibMpvBackend:
 
     def _error_string(self, error: int) -> str:
         try:
-            message = self._library.mpv_error_string(error)
+            message = self._require_library().mpv_error_string(error)
         except Exception:
             return f"libmpv error {error}"
         return message.decode("utf-8", errors="replace") if message else f"libmpv error {error}"
