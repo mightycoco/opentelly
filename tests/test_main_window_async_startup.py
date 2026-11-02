@@ -12,6 +12,8 @@ from iptv_player.player.backend import BackendEvent
 
 
 class SlowMpvProcess:
+    requires_render_widget = False
+
     def __init__(self) -> None:
         self.started = False
         self.stopped = False

@@ -57,8 +57,8 @@ class MpvWorker(QObject):
         with self._state_lock:
             return self._started or self._starting or self._stopping
 
-    @Slot(int)
-    def start(self, hwnd: int) -> None:
+    @Slot(object)
+    def start(self, hwnd: int | None = None) -> None:
         with self._state_lock:
             if self._started or self._starting or self._shutdown_requested:
                 return
@@ -71,7 +71,7 @@ class MpvWorker(QObject):
             )
             self._lifecycle_thread.start()
 
-    def _start_process(self, hwnd: int) -> None:
+    def _start_process(self, hwnd: int | None) -> None:
         try:
             self._process.add_callback(self.backend_event.emit)
             self._process.start(hwnd)

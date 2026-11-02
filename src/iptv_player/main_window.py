@@ -13,12 +13,13 @@ from iptv_player.audio_track_overlay import AudioTrackOverlay
 from iptv_player.channel_overlay import ChannelOverlay
 from iptv_player.models import AudioTrack, Channel
 from iptv_player.player.backend import MpvBackend
-from iptv_player.player.mpv_process import MpvProcess
+from iptv_player.player.factory import create_mpv_backend
 from iptv_player.player.worker import MpvWorker
 from iptv_player.playback_control_bar import PlaybackControlBar
 from iptv_player.preferences import PlayerPreferences, channel_key
 from iptv_player.playlist.m3u_parser import parse_m3u_playlist
 from iptv_player.settings import MpvSettings
+from iptv_player.render_video_widget import MpvRenderWidget
 from iptv_player.video_widget import VideoWidget
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     """Main application window."""
 
-    start_player_requested = Signal(int)
+    start_player_requested = Signal(object)
     load_channel_requested = Signal(object)
     stop_player_requested = Signal()
 
@@ -39,12 +40,17 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self._preferences = preferences or PlayerPreferences()
+        self._mpv_settings = MpvSettings()
+        self._mpv = mpv_process or create_mpv_backend(self._mpv_settings)
         self.channels: list[Channel] = []
         self._favourites = self._preferences.favourites()
         self.current_channel: Channel | None = None
         self._playlist_path = Path(playlist_path) if playlist_path else None
         self._initial_channel: Channel | None = None
-        self._video_widget = VideoWidget(self)
+        if self._mpv.requires_render_widget:
+            self._video_widget = MpvRenderWidget(self._mpv, self)
+        else:
+            self._video_widget = VideoWidget(self)
         self._overlay = ChannelOverlay(self)
         self._overlay.list_widget.itemClicked.connect(self._on_channel_selected)
         self._overlay.favourite_toggle_requested.connect(self._toggle_favourite)
@@ -71,8 +77,6 @@ class MainWindow(QMainWindow):
         self._channel_load_timer.setSingleShot(True)
         self._channel_load_timer.setInterval(30000)
         self._channel_load_timer.timeout.connect(self._on_channel_load_timeout)
-        self._mpv_settings = MpvSettings()
-        self._mpv = mpv_process or MpvProcess(self._mpv_settings)
         self._player_worker = MpvWorker(self._mpv)
         self.start_player_requested.connect(self._player_worker.start)
         self.load_channel_requested.connect(self._player_worker.load_channel)
@@ -258,23 +262,38 @@ class MainWindow(QMainWindow):
         if self._mpv_started or self._mpv_starting:
             return True
 
-        try:
-            hwnd = self._video_widget.native_window_handle()
-        except RuntimeError as exc:
-            logger.exception("Unable to get the video widget handle")
-            QMessageBox.critical(self, "Playback error", str(exc))
-            return False
+        hwnd = None
+        if not self._mpv.requires_render_widget:
+            try:
+                hwnd = self._video_widget.native_window_handle()
+            except RuntimeError as exc:
+                logger.exception("Unable to get the video widget handle")
+                QMessageBox.critical(self, "Playback error", str(exc))
+                return False
 
         self._mpv_starting = True
-        self._status_bar.showMessage("Starting mpv...")
+        self._status_bar.showMessage("Starting libmpv..." if self._mpv.requires_render_widget else "Starting mpv...")
         self.start_player_requested.emit(hwnd)
         return True
 
     def _on_player_ready(self) -> None:
+        try:
+            if self._mpv.requires_render_widget:
+                self._mpv.attach_renderer(self._video_widget)
+        except Exception as exc:
+            self._mpv_starting = False
+            logger.exception("Unable to initialize libmpv rendering")
+            QMessageBox.critical(
+                self,
+                "Playback error",
+                f"Unable to initialize video rendering: {exc}",
+            )
+            self.stop_player_requested.emit()
+            return
         self._mpv_starting = False
         self._mpv_started = True
         self._update_playback_control_state()
-        self._status_bar.showMessage("mpv ready", 2000)
+        self._status_bar.showMessage("Player ready", 2000)
         if self._pending_channel is not None:
             channel = self._pending_channel
             self._pending_channel = None
@@ -587,6 +606,11 @@ class MainWindow(QMainWindow):
                 self._hide_timer.stop()
                 self._audio_overlay.hide()
                 self._playback_controls.hide()
+                try:
+                    if self._mpv.requires_render_widget:
+                        self._mpv.detach_renderer(self._video_widget)
+                except Exception:
+                    logger.exception("Failed to detach the libmpv renderer during shutdown")
                 self.stop_player_requested.emit()
             return
         self._save_window_preferences()

@@ -15,6 +15,8 @@ def deliver_message(worker: MpvWorker, message: dict) -> None:
 
 
 class FakeMpvProcess:
+    requires_render_widget = False
+
     def __init__(self) -> None:
         self.callbacks = []
         self.request_id = 16

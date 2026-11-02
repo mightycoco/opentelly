@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 class MpvProcess:
     """Owns the mpv process and its IPC channel."""
 
+    requires_render_widget = False
+
     def __init__(self, settings: MpvSettings | None = None) -> None:
         self.settings = settings or MpvSettings()
         self.process: subprocess.Popen[Any] | None = None
@@ -27,12 +29,14 @@ class MpvProcess:
         self._stderr_lines: deque[str] = deque(maxlen=50)
         self._stderr_thread: threading.Thread | None = None
 
-    def start(self, hwnd: int) -> None:
+    def start(self, hwnd: int | None = None) -> None:
         with self._lock:
             if self._started and self.process is not None and self.process.poll() is None:
                 return
             self._stderr_lines.clear()
             try:
+                if hwnd is None:
+                    raise ValueError("A native video window handle is required by the mpv process backend")
                 command = self.settings.build_command(hwnd)
                 command[0] = self.settings.resolve_executable()
                 self.process = subprocess.Popen(
@@ -97,6 +101,15 @@ class MpvProcess:
 
     def observe_property(self, property_name: str, observer_id: int) -> int:
         return self.ipc.observe_property(property_name, observer_id)
+
+    def attach_renderer(self, widget: Any) -> None:
+        return None
+
+    def detach_renderer(self, widget: Any) -> None:
+        return None
+
+    def render(self, framebuffer: int, width: int, height: int) -> None:
+        return None
 
     def stop(self) -> None:
         self.ipc.stop_reading()
