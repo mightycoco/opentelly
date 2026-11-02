@@ -11,6 +11,11 @@ the upstream SHA-256 manifest and records the exact package, mpv and FFmpeg
 revisions, license texts, and corresponding mpv/FFmpeg/build-repository source
 archives inside `runtime/licenses/`.
 
+For a plain checkout, install 7-Zip and run
+`scripts/fetch_mpv_runtime.ps1 -RuntimeDirectory "$PWD\runtime" -SevenZipPath
+"$env:ProgramFiles\7-Zip\7z.exe"`. This stages the runtime at the path the
+backend searches; the generated `runtime/` directory is ignored by Git.
+
 The upstream project describes its LGPL mpv build as using `-Dgpl=false` and
 statically linking LGPLv3 FFmpeg. It also explicitly cautions that it cannot
 guarantee every package in the build is LGPL-compatible. Consequently this

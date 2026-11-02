@@ -47,6 +47,17 @@ only contain `mpv.exe`. If you have a separate libmpv DLL, set `MPV_LIBRARY`
 to its full path to use it. The release source ZIP includes an LGPL-labelled
 libmpv runtime under `runtime/`, which is discovered automatically.
 
+For a plain checkout, you can stage the same replaceable LGPL-labelled libmpv
+runtime included in release source ZIPs. Install 7-Zip, then run:
+
+```powershell
+.\scripts\fetch_mpv_runtime.ps1 `
+  -RuntimeDirectory "$PWD\runtime" `
+  -SevenZipPath "$env:ProgramFiles\7-Zip\7z.exe"
+```
+
+The script downloads upstream packages, verifies their SHA-256 checksums, and
+places the DLL under `runtime/`; generated runtime files are ignored by Git.
 The environment variable applies to the current PowerShell session. Backend
 selection can be overridden with `OPEN_TELLY_BACKEND=libmpv` or
 `OPEN_TELLY_BACKEND=process`; the process backend locates mpv on `PATH` or in
