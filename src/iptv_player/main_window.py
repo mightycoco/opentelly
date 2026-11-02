@@ -4,6 +4,7 @@ import ctypes
 import logging
 import os
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QCursor
@@ -265,7 +266,7 @@ class MainWindow(QMainWindow):
         hwnd = None
         if not self._mpv.requires_render_widget:
             try:
-                hwnd = self._video_widget.native_window_handle()
+                hwnd = cast(VideoWidget, self._video_widget).native_window_handle()
             except RuntimeError as exc:
                 logger.exception("Unable to get the video widget handle")
                 QMessageBox.critical(self, "Playback error", str(exc))
