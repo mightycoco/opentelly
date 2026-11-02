@@ -81,8 +81,8 @@ class _MpvEventEndFile(ctypes.Structure):
     _fields_ = [
         ("reason", ctypes.c_int),
         ("error", ctypes.c_int),
-        ("playlist_entry_id", ctypes.c_int),
-        ("playlist_insert_id", ctypes.c_int),
+        ("playlist_entry_id", ctypes.c_int64),
+        ("playlist_insert_id", ctypes.c_int64),
         ("playlist_insert_num_entries", ctypes.c_int),
     ]
 
@@ -181,10 +181,30 @@ class LibMpvBackend:
                     ),
                     f"set mpv option {name}",
                 )
-            for argument in self.settings.extra_args:
+            extra_args = self.settings.extra_args
+            argument_index = 0
+            while argument_index < len(extra_args):
+                argument = extra_args[argument_index]
+                argument_index += 1
+                if not argument.startswith("-"):
+                    raise ValueError(f"Expected mpv option beginning with '-': {argument}")
                 name, separator, value = argument.lstrip("-").partition("=")
-                if not separator or not name:
-                    raise ValueError(f"Expected mpv option in name=value form: {argument}")
+                is_negative = name.startswith("no-")
+                if is_negative:
+                    name = name[3:]
+                if not name:
+                    raise ValueError(f"Expected mpv option name: {argument}")
+                if not separator:
+                    if is_negative:
+                        value = "no"
+                    elif (
+                        argument_index < len(extra_args)
+                        and not extra_args[argument_index].startswith("-")
+                    ):
+                        value = extra_args[argument_index]
+                        argument_index += 1
+                    else:
+                        value = "yes"
                 self._check(
                     self._library.mpv_set_option_string(
                         self._handle,
@@ -213,6 +233,15 @@ class LibMpvBackend:
         candidates = [self.library_path] if self.library_path else []
         if os.name == "nt":
             candidates.extend(("mpv-2.dll", "libmpv-2.dll"))
+            local_app_data = os.environ.get("LOCALAPPDATA")
+            if local_app_data:
+                winget_packages = Path(local_app_data) / "Microsoft" / "WinGet" / "Packages"
+                for package in winget_packages.glob("shinchiro.mpv_*"):
+                    candidates.extend(
+                        str(path)
+                        for library_name in ("mpv-2.dll", "libmpv-2.dll")
+                        for path in package.rglob(library_name)
+                    )
             try:
                 executable = Path(self.settings.resolve_executable())
             except FileNotFoundError:
@@ -311,12 +340,8 @@ class LibMpvBackend:
         }
         for name, (restype, argtypes) in signatures.items():
             function = getattr(self._library, name)
-            try:
-                function.restype = restype
-                function.argtypes = argtypes
-            except (AttributeError, TypeError):
-                if not callable(function):
-                    raise TypeError(f"libmpv API symbol {name} is not callable")
+            function.restype = restype
+            function.argtypes = argtypes
 
     def reserve_request_id(self) -> int:
         with self._request_lock:

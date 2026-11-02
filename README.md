@@ -7,7 +7,8 @@ A simple Windows IPTV desktop client built with Python 3.12+ and PySide6. It loa
 - Open an M3U/Extended M3U playlist
 - Parse channel metadata (`tvg-id`, `group-title`, `tvg-logo`, etc.)
 - Ignore player-specific M3U comments such as `#EXTVLCOPT`
-- Embed mpv into the Qt application window using the native Windows HWND
+- Render video inside Qt through libmpv; the legacy subprocess backend embeds
+  mpv using the native Windows HWND
 - Switch channels with `loadfile` while keeping the same mpv process alive
 - Show previous, stop/play, mute/unmute, and next controls when hovering over the bottom-left video area; channel navigation wraps around the playlist
 - Show an audio-track selector when a channel has multiple audio streams
@@ -27,25 +28,32 @@ A simple Windows IPTV desktop client built with Python 3.12+ and PySide6. It loa
 
 - Python 3.12 or newer recommended
 - Windows 10 or 11 (64-bit)
-- mpv installed (the standard Winget install location is detected automatically)
+- The mpv shared library (`mpv-2.dll` or `libmpv-2.dll`) for the default libmpv backend
 - PySide6 dependencies installed via `pip`
 
-## Install mpv on Windows
+## Install libmpv on Windows
 
-The simplest way is to install mpv from the official project or via winget:
+Install an mpv build that includes the shared library, for example:
 
 ```powershell
 winget install --id=shinchiro.mpv --source winget
 ```
 
-Verify the binary is available:
+If Open Telly cannot find the library automatically, locate it and set
+`MPV_LIBRARY` to its full path before starting the application:
 
 ```powershell
-mpv --version
+$mpvLibrary = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" `
+  -Include mpv-2.dll,libmpv-2.dll -File -Recurse |
+  Select-Object -First 1 -ExpandProperty FullName
+$env:MPV_LIBRARY = $mpvLibrary
+python main.py
 ```
 
-If mpv is installed elsewhere, add it to `PATH` or configure the executable in
-`MpvSettings(executable=r"C:\path\to\mpv.exe")`.
+The environment variable applies to the current PowerShell session. To use the
+legacy mpv process backend instead, set `OPEN_TELLY_BACKEND=process`; that
+backend requires `mpv.exe` to be on `PATH` or its location to be configured in
+`MpvSettings(executable=...)`.
 
 ## Setup
 

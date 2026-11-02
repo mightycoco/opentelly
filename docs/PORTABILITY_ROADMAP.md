@@ -6,14 +6,13 @@ claim that either platform is currently supported.
 
 ## Implementation status
 
-The worker now consumes the `MpvBackend` protocol, and the existing subprocess
-implementation conforms through its adapter methods. This is an incremental
-seam only: startup still accepts a Windows window handle. Playback operations
-have named backend methods, raw mpv commands are isolated in the subprocess
-adapter, and IPC events are normalized before reaching the worker. A
-platform-neutral render target and libmpv event source remain to be implemented
-before a portable renderer can be added. The subprocess backend is still the
-only production backend.
+The worker consumes the `MpvBackend` protocol, and both the subprocess adapter
+and an initial libmpv backend implement it. The libmpv backend is selected by
+default and uses a Qt OpenGL widget; set `OPEN_TELLY_BACKEND=process` to select
+the legacy subprocess backend. This is an initial implementation, not a
+validated cross-platform renderer: native libmpv playback, rendering, and
+shutdown still need runtime testing before the migration can be considered
+complete. The subprocess backend remains available for Windows fallback.
 
 ## Current platform-specific constraints
 

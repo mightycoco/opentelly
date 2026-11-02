@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication
 from iptv_player.main_window import MainWindow
 from iptv_player.models import Channel
 from iptv_player.player.backend import BackendEvent
+from iptv_player.render_video_widget import MpvRenderWidget
 
 
 class SlowMpvProcess:
@@ -17,6 +18,8 @@ class SlowMpvProcess:
     def __init__(self) -> None:
         self.started = False
         self.stopped = False
+        self.start_entered = threading.Event()
+        self.allow_start = threading.Event()
         self.callbacks = []
         self.request_id = 0
 
@@ -24,7 +27,8 @@ class SlowMpvProcess:
         self.callbacks.append(callback)
 
     def start(self, hwnd: int) -> None:
-        time.sleep(0.25)
+        self.start_entered.set()
+        self.allow_start.wait(timeout=2)
         self.started = True
 
     def reserve_request_id(self) -> int:
@@ -90,11 +94,13 @@ def test_player_startup_playback_and_exit_do_not_block_the_gui_thread(monkeypatc
         timer_fired = True
 
     window.show()
+    assert fake_process.start_entered.wait(timeout=2)
     QTimer.singleShot(0, mark_timer_fired)
     app.processEvents()
 
     assert timer_fired
     assert not fake_process.started
+    fake_process.allow_start.set()
 
     deadline = time.monotonic() + 2
     while not window._mpv_started and time.monotonic() < deadline:
@@ -154,3 +160,25 @@ def test_player_startup_playback_and_exit_do_not_block_the_gui_thread(monkeypatc
         QTest.qWait(10)
     assert fake_process.stopped
     assert not window.isVisible()
+
+
+def test_libmpv_renderer_is_attached_after_player_ready() -> None:
+    class RenderBackend:
+        requires_render_widget = True
+
+        def __init__(self) -> None:
+            self.attached_widget = None
+
+        def attach_renderer(self, widget) -> None:
+            self.attached_widget = widget
+
+    app = QApplication.instance() or QApplication([])
+    backend = RenderBackend()
+    window = MainWindow(mpv_process=backend)
+
+    assert isinstance(window._video_widget, MpvRenderWidget)
+    window._on_player_ready()
+
+    assert backend.attached_widget is window._video_widget
+    assert window._mpv_started
+    window.close()
