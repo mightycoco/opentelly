@@ -7,26 +7,33 @@ from iptv_player.models import Channel
 from iptv_player.player.worker import MpvWorker
 
 
-class FakeIpc:
+class FakeMpvProcess:
     def __init__(self) -> None:
         self.callbacks = []
+        self.request_id = 16
+        self.commands = []
 
     def add_callback(self, callback) -> None:
         self.callbacks.append(callback)
-
-
-class FakeMpvProcess:
-    def __init__(self) -> None:
-        self.ipc = FakeIpc()
-        self.request_id = 16
-        self.commands = []
 
     def reserve_request_id(self) -> int:
         self.request_id += 1
         return self.request_id
 
     def load_channel(self, channel: Channel, request_id: int | None = None) -> int:
-        return request_id if request_id is not None else self.reserve_request_id()
+        return self.send_command(["loadfile", channel.url, "replace"], request_id)
+
+    def select_audio_track(self, track_id: int, request_id: int) -> int:
+        return self.send_command(["set_property", "aid", track_id], request_id)
+
+    def stop_playback(self, request_id: int) -> int:
+        return self.send_command(["stop"], request_id)
+
+    def set_muted(self, muted: bool, request_id: int) -> int:
+        return self.send_command(["set_property", "mute", muted], request_id)
+
+    def get_audio_tracks(self, request_id: int) -> int:
+        return self.send_command(["get_property", "track-list"], request_id)
 
     def send_command(self, command: list[str | int], request_id: int | None = None) -> int:
         self.commands.append((command, request_id))

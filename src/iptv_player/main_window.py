@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QFileDialog, QMainWindow, QMenu, QMessageBox, QSta
 from iptv_player.audio_track_overlay import AudioTrackOverlay
 from iptv_player.channel_overlay import ChannelOverlay
 from iptv_player.models import AudioTrack, Channel
+from iptv_player.player.backend import MpvBackend
 from iptv_player.player.mpv_process import MpvProcess
 from iptv_player.player.worker import MpvWorker
 from iptv_player.playback_control_bar import PlaybackControlBar
@@ -33,7 +34,7 @@ class MainWindow(QMainWindow):
     def __init__(
         self,
         playlist_path: str | Path | None = None,
-        mpv_process: MpvProcess | None = None,
+        mpv_process: MpvBackend | None = None,
         preferences: PlayerPreferences | None = None,
     ) -> None:
         super().__init__()

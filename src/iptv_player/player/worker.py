@@ -7,7 +7,7 @@ import threading
 from PySide6.QtCore import QObject, Qt, Signal, Slot
 
 from iptv_player.models import AudioTrack, Channel
-from iptv_player.player.mpv_process import MpvProcess
+from iptv_player.player.backend import BackendCommand, MpvBackend
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class MpvWorker(QObject):
     _command_failed = Signal(int, str)
     _stop_complete = Signal()
 
-    def __init__(self, process: MpvProcess) -> None:
+    def __init__(self, process: MpvBackend) -> None:
         super().__init__()
         self._process = process
         self._pending_channel: Channel | None = None
@@ -39,7 +39,7 @@ class MpvWorker(QObject):
         self._state_lock = threading.Lock()
         self._lifecycle_thread: threading.Thread | None = None
         self._command_thread: threading.Thread | None = None
-        self._command_queue: queue.Queue[tuple[int, list[str | int]] | None] = queue.Queue()
+        self._command_queue: queue.Queue[BackendCommand | None] = queue.Queue()
         self._audio_request_ids: set[int] = set()
         self._track_query_request_ids: set[int] = set()
         self._control_request_ids: dict[int, tuple[str, object, str]] = {}
@@ -73,7 +73,7 @@ class MpvWorker(QObject):
 
     def _start_process(self, hwnd: int) -> None:
         try:
-            self._process.ipc.add_callback(self.mpv_message.emit)
+            self._process.add_callback(self.mpv_message.emit)
             self._process.start(hwnd)
             self._process.observe_property("track-list", 1)
             self._process.observe_property("metadata", 2)
@@ -121,9 +121,7 @@ class MpvWorker(QObject):
         self._channels_by_request_id[request_id] = channel
         self._track_query_request_ids.clear()
         self.audio_tracks_changed.emit([])
-        self._command_queue.put(
-            (request_id, ["loadfile", channel.url, "replace"])
-        )
+        self._command_queue.put((request_id, "load_channel", channel))
 
     @Slot(int)
     def select_audio_track(self, track_id: int) -> None:
@@ -140,17 +138,17 @@ class MpvWorker(QObject):
             return
 
         self._audio_request_ids.add(request_id)
-        self._command_queue.put((request_id, ["set_property", "aid", track_id]))
+        self._command_queue.put((request_id, "select_audio_track", track_id))
 
     @Slot()
     def stop_playback(self) -> None:
-        self._queue_control_command(["stop"], "stopped", True, "stop playback")
+        self._queue_control_command("stop_playback", "stopped", True, "stop playback")
 
     @Slot(bool)
     def set_muted(self, muted: bool) -> None:
         action = "mute" if muted else "unmute"
         self._queue_control_command(
-            ["set_property", "mute", muted],
+            "set_muted",
             "muted",
             muted,
             action,
@@ -158,7 +156,7 @@ class MpvWorker(QObject):
 
     def _queue_control_command(
         self,
-        command: list[str | int],
+        command: str,
         operation: str,
         value: object,
         description: str,
@@ -184,19 +182,37 @@ class MpvWorker(QObject):
             return
 
         self._control_request_ids[request_id] = (operation, value, description)
-        self._command_queue.put((request_id, command))
+        self._command_queue.put((request_id, command, value))
 
     def _send_channel_commands(self) -> None:
         while True:
             command = self._command_queue.get()
             if command is None:
                 return
-            request_id, mpv_command = command
+            request_id, operation, value = command
             try:
-                self._process.send_command(mpv_command, request_id)
+                self._execute_backend_command(operation, value, request_id)
             except Exception as exc:
-                logger.exception("Failed to send mpv command %s", mpv_command)
+                logger.exception("Failed to execute mpv backend operation %s", operation)
                 self._command_failed.emit(request_id, str(exc))
+
+    def _execute_backend_command(
+        self,
+        operation: str,
+        value: object,
+        request_id: int,
+    ) -> int:
+        if operation == "load_channel" and isinstance(value, Channel):
+            return self._process.load_channel(value, request_id)
+        if operation == "select_audio_track" and isinstance(value, int):
+            return self._process.select_audio_track(value, request_id)
+        if operation == "stop_playback":
+            return self._process.stop_playback(request_id)
+        if operation == "set_muted" and isinstance(value, bool):
+            return self._process.set_muted(value, request_id)
+        if operation == "get_audio_tracks":
+            return self._process.get_audio_tracks(request_id)
+        raise ValueError(f"Unsupported mpv backend operation: {operation}")
 
     @Slot(int, str)
     def _on_command_failed(self, request_id: int, error: str) -> None:
@@ -346,7 +362,7 @@ class MpvWorker(QObject):
             logger.exception("Failed to reserve an mpv request for the audio track list")
             return
         self._track_query_request_ids.add(request_id)
-        self._command_queue.put((request_id, ["get_property", "track-list"]))
+        self._command_queue.put((request_id, "get_audio_tracks", None))
 
     def _fail_pending_request(self, request_id: int, error: str) -> None:
         self._channels_by_request_id.pop(request_id, None)

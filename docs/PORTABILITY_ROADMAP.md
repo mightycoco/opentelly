@@ -4,6 +4,17 @@ This document describes the work needed to make Open Telly available on macOS
 and Linux while preserving its existing Windows behavior. It is a roadmap, not a
 claim that either platform is currently supported.
 
+## Implementation status
+
+The worker now consumes the `MpvBackend` protocol, and the existing subprocess
+implementation conforms through its adapter methods. This is an incremental
+seam only: the current contract still accepts a Windows window handle and
+forwards mpv-shaped event dictionaries. Playback operations now have named
+backend methods, with raw mpv commands isolated in the subprocess adapter. A
+platform-neutral render target and normalized event model remain to be
+implemented before a portable renderer can be added. The subprocess backend is
+still the only production backend.
+
 ## Current platform-specific constraints
 
 - `src/iptv_player/player/mpv_ipc.py` communicates with mpv through Windows named

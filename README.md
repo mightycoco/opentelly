@@ -82,6 +82,11 @@ TCP if needed.
 pytest
 ```
 
+## Releases
+
+See [docs/RELEASING.md](docs/RELEASING.md) for the manual GitHub Actions release
+workflow and selectable semantic-version increments.
+
 ## Notes
 
 The implementation is intentionally modular so the playlist parser, GUI logic and mpv controller remain separate.

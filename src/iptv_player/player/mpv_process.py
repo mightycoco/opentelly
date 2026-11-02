@@ -8,6 +8,7 @@ from collections import deque
 from typing import Any
 
 from iptv_player.models import Channel
+from iptv_player.player.backend import MpvMessageCallback
 from iptv_player.player.mpv_ipc import MpvIpcClient
 from iptv_player.settings import MpvSettings
 
@@ -66,6 +67,9 @@ class MpvProcess:
     def reserve_request_id(self) -> int:
         return self.ipc.reserve_request_id()
 
+    def add_callback(self, callback: MpvMessageCallback) -> None:
+        self.ipc.add_callback(callback)
+
     def send_command(self, command: list[str | int], request_id: int | None = None) -> int:
         if self.process is None or self.process.poll() is not None:
             raise RuntimeError("mpv is not running")
@@ -73,6 +77,18 @@ class MpvProcess:
 
     def load_channel(self, channel: Channel, request_id: int | None = None) -> int:
         return self.send_command(["loadfile", channel.url, "replace"], request_id)
+
+    def select_audio_track(self, track_id: int, request_id: int) -> int:
+        return self.send_command(["set_property", "aid", track_id], request_id)
+
+    def stop_playback(self, request_id: int) -> int:
+        return self.send_command(["stop"], request_id)
+
+    def set_muted(self, muted: bool, request_id: int) -> int:
+        return self.send_command(["set_property", "mute", muted], request_id)
+
+    def get_audio_tracks(self, request_id: int) -> int:
+        return self.send_command(["get_property", "track-list"], request_id)
 
     def observe_property(self, property_name: str, observer_id: int) -> int:
         return self.ipc.observe_property(property_name, observer_id)

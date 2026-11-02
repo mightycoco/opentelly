@@ -14,15 +14,11 @@ class SlowMpvProcess:
     def __init__(self) -> None:
         self.started = False
         self.stopped = False
-        self.ipc = self.FakeIpc()
+        self.callbacks = []
         self.request_id = 0
 
-    class FakeIpc:
-        def __init__(self) -> None:
-            self.callbacks = []
-
-        def add_callback(self, callback) -> None:
-            self.callbacks.append(callback)
+    def add_callback(self, callback) -> None:
+        self.callbacks.append(callback)
 
     def start(self, hwnd: int) -> None:
         time.sleep(0.25)
@@ -37,7 +33,7 @@ class SlowMpvProcess:
 
         def report_loaded() -> None:
             time.sleep(0.25)
-            for callback in self.ipc.callbacks:
+            for callback in self.callbacks:
                 callback(
                     {
                         "request_id": request_id,
@@ -51,6 +47,18 @@ class SlowMpvProcess:
 
         threading.Thread(target=report_loaded, daemon=True).start()
         return request_id
+
+    def select_audio_track(self, track_id: int, request_id: int) -> int:
+        return self.send_command(["set_property", "aid", track_id], request_id)
+
+    def stop_playback(self, request_id: int) -> int:
+        return self.send_command(["stop"], request_id)
+
+    def set_muted(self, muted: bool, request_id: int) -> int:
+        return self.send_command(["set_property", "mute", muted], request_id)
+
+    def get_audio_tracks(self, request_id: int) -> int:
+        return self.send_command(["get_property", "track-list"], request_id)
 
     def send_command(self, command, request_id: int | None = None) -> int:
         if command[0] == "loadfile":
