@@ -8,12 +8,12 @@ claim that either platform is currently supported.
 
 The worker now consumes the `MpvBackend` protocol, and the existing subprocess
 implementation conforms through its adapter methods. This is an incremental
-seam only: the current contract still accepts a Windows window handle and
-forwards mpv-shaped event dictionaries. Playback operations now have named
-backend methods, with raw mpv commands isolated in the subprocess adapter. A
-platform-neutral render target and normalized event model remain to be
-implemented before a portable renderer can be added. The subprocess backend is
-still the only production backend.
+seam only: startup still accepts a Windows window handle. Playback operations
+have named backend methods, raw mpv commands are isolated in the subprocess
+adapter, and IPC events are normalized before reaching the worker. A
+platform-neutral render target and libmpv event source remain to be implemented
+before a portable renderer can be added. The subprocess backend is still the
+only production backend.
 
 ## Current platform-specific constraints
 

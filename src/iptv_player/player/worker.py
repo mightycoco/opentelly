@@ -7,7 +7,7 @@ import threading
 from PySide6.QtCore import QObject, Qt, Signal, Slot
 
 from iptv_player.models import AudioTrack, Channel
-from iptv_player.player.backend import BackendCommand, MpvBackend
+from iptv_player.player.backend import BackendCommand, BackendEvent, MpvBackend
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class MpvWorker(QObject):
     audio_selection_failed = Signal(str)
     playback_control_failed = Signal(str, object, str)
     stopped = Signal()
-    mpv_message = Signal(dict)
+    backend_event = Signal(object)
     _command_failed = Signal(int, str)
     _stop_complete = Signal()
 
@@ -48,7 +48,7 @@ class MpvWorker(QObject):
         self._starting = False
         self._stopping = False
         self._shutdown_requested = False
-        self.mpv_message.connect(self._handle_mpv_message, Qt.QueuedConnection)
+        self.backend_event.connect(self._handle_backend_event, Qt.QueuedConnection)
         self._command_failed.connect(self._on_command_failed, Qt.QueuedConnection)
         self._stop_complete.connect(self._finish_stop, Qt.QueuedConnection)
 
@@ -73,7 +73,7 @@ class MpvWorker(QObject):
 
     def _start_process(self, hwnd: int) -> None:
         try:
-            self._process.add_callback(self.mpv_message.emit)
+            self._process.add_callback(self.backend_event.emit)
             self._process.start(hwnd)
             self._process.observe_property("track-list", 1)
             self._process.observe_property("metadata", 2)
@@ -233,13 +233,13 @@ class MpvWorker(QObject):
                 f"Could not send channel change to mpv: {error}",
             )
 
-    @Slot(dict)
-    def _handle_mpv_message(self, message: dict) -> None:
-        request_id = message.get("request_id")
+    @Slot(object)
+    def _handle_backend_event(self, message: BackendEvent) -> None:
+        request_id = message.request_id
         if request_id in self._channels_by_request_id:
             channel = self._channels_by_request_id[request_id]
-            error = message.get("error")
-            if message.get("event") == "ipc-write-error":
+            error = message.error
+            if message.kind == "transport-error":
                 self._channels_by_request_id.pop(request_id, None)
                 self._fail_pending_request(request_id, f"Could not send channel change to mpv: {error}")
                 return
@@ -247,11 +247,11 @@ class MpvWorker(QObject):
                 self._channels_by_request_id.pop(request_id, None)
                 self._fail_pending_request(request_id, f"mpv rejected {channel.name}: {error}")
                 return
-            data = message.get("data")
+            data = message.data
             if isinstance(data, dict) and isinstance(data.get("playlist_entry_id"), int):
                 self._channels_by_playlist_id[data["playlist_entry_id"]] = (request_id, channel)
         elif request_id in self._audio_request_ids:
-            error = message.get("error")
+            error = message.error
             if error:
                 self._audio_request_ids.discard(request_id)
                 if error == "success":
@@ -262,12 +262,12 @@ class MpvWorker(QObject):
                     )
         elif request_id in self._track_query_request_ids:
             self._track_query_request_ids.discard(request_id)
-            if message.get("error") == "success":
-                self.audio_tracks_snapshot.emit(self._parse_audio_tracks(message.get("data")))
+            if message.error == "success":
+                self.audio_tracks_snapshot.emit(self._parse_audio_tracks(message.data))
 
         if request_id in self._control_request_ids:
             operation, value, description = self._control_request_ids.pop(request_id)
-            error = message.get("error")
+            error = message.error
             if error and error != "success":
                 self.playback_control_failed.emit(
                     operation,
@@ -275,17 +275,16 @@ class MpvWorker(QObject):
                     f"Could not {description}: {error}",
                 )
 
-        event = message.get("event")
-        if event == "property-change" and message.get("name") == "track-list":
-            tracks = self._parse_audio_tracks(message.get("data"))
+        if message.kind == "property-change" and message.property_name == "track-list":
+            tracks = self._parse_audio_tracks(message.data)
             self.audio_tracks_changed.emit(tracks)
-        elif event == "property-change" and message.get("name") == "metadata":
-            title = self._parse_stream_title(message.get("data"))
+        elif message.kind == "property-change" and message.property_name == "metadata":
+            title = self._parse_stream_title(message.data)
             if title != self._stream_title:
                 self._stream_title = title
                 self.stream_title_changed.emit(title)
-        elif event == "file-loaded":
-            playlist_entry_id = message.get("playlist_entry_id")
+        elif message.kind == "file-loaded":
+            playlist_entry_id = message.playlist_entry_id
             if playlist_entry_id is None:
                 request_id = self._pending_request_id
                 channel = self._channels_by_request_id.get(request_id)
@@ -294,12 +293,12 @@ class MpvWorker(QObject):
                 entry = self._channels_by_playlist_id.pop(playlist_entry_id, None)
             if entry is not None:
                 self._complete_pending_request(*entry)
-        elif event == "end-file":
-            entry = self._channels_by_playlist_id.pop(message.get("playlist_entry_id"), None)
-            if message.get("reason") == "error" and entry is not None:
+        elif message.kind == "end-file":
+            entry = self._channels_by_playlist_id.pop(message.playlist_entry_id, None)
+            if message.reason == "error" and entry is not None:
                 details = (
-                    message.get("error")
-                    or message.get("file_error")
+                    message.error
+                    or message.file_error
                     or "stream could not be opened"
                 )
                 self._fail_pending_request(entry[0], f"Unable to play {entry[1].name}: {details}")

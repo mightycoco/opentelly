@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication
 
 from iptv_player.main_window import MainWindow
 from iptv_player.models import Channel
+from iptv_player.player.backend import BackendEvent
 
 
 class SlowMpvProcess:
@@ -35,14 +36,18 @@ class SlowMpvProcess:
             time.sleep(0.25)
             for callback in self.callbacks:
                 callback(
-                    {
-                        "request_id": request_id,
-                        "error": "success",
-                        "data": {"playlist_entry_id": request_id},
-                    }
+                    BackendEvent(
+                        kind="command-reply",
+                        request_id=request_id,
+                        error="success",
+                        data={"playlist_entry_id": request_id},
+                    )
                 )
                 callback(
-                    {"event": "file-loaded", "playlist_entry_id": request_id}
+                    BackendEvent(
+                        kind="file-loaded",
+                        playlist_entry_id=request_id,
+                    )
                 )
 
         threading.Thread(target=report_loaded, daemon=True).start()

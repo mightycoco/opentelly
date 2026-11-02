@@ -8,7 +8,7 @@ from collections import deque
 from typing import Any
 
 from iptv_player.models import Channel
-from iptv_player.player.backend import MpvMessageCallback
+from iptv_player.player.backend import BackendEvent, MpvEventCallback
 from iptv_player.player.mpv_ipc import MpvIpcClient
 from iptv_player.settings import MpvSettings
 
@@ -67,8 +67,13 @@ class MpvProcess:
     def reserve_request_id(self) -> int:
         return self.ipc.reserve_request_id()
 
-    def add_callback(self, callback: MpvMessageCallback) -> None:
-        self.ipc.add_callback(callback)
+    def add_callback(self, callback: MpvEventCallback) -> None:
+        def dispatch(message: dict[str, Any]) -> None:
+            event = BackendEvent.from_ipc_message(message)
+            if event is not None:
+                callback(event)
+
+        self.ipc.add_callback(dispatch)
 
     def send_command(self, command: list[str | int], request_id: int | None = None) -> int:
         if self.process is None or self.process.poll() is not None:

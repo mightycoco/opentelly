@@ -4,7 +4,14 @@ import time
 from PySide6.QtTest import QSignalSpy
 
 from iptv_player.models import Channel
+from iptv_player.player.backend import BackendEvent
 from iptv_player.player.worker import MpvWorker
+
+
+def deliver_message(worker: MpvWorker, message: dict) -> None:
+    event = BackendEvent.from_ipc_message(message)
+    assert event is not None
+    worker._handle_backend_event(event)
 
 
 class FakeMpvProcess:
@@ -61,7 +68,7 @@ def test_worker_waits_for_mpv_file_loaded_before_reporting_success() -> None:
     channel = Channel(name="Second", url="rtsp://example.com/second")
 
     worker.load_channel(channel)
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {
             "request_id": 17,
             "error": "success",
@@ -70,7 +77,7 @@ def test_worker_waits_for_mpv_file_loaded_before_reporting_success() -> None:
     )
     assert loaded.count() == 0
 
-    worker._handle_mpv_message({"event": "file-loaded"})
+    deliver_message(worker, {"event": "file-loaded"})
     assert loaded.count() == 1
     assert loaded.at(0)[0] == channel
     assert failed.count() == 0
@@ -82,14 +89,14 @@ def test_worker_reports_asynchronous_stream_errors() -> None:
     failed = QSignalSpy(worker.channel_failed)
 
     worker.load_channel(Channel(name="Unavailable", url="rtsp://example.com/missing"))
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {
             "request_id": 17,
             "error": "success",
             "data": {"playlist_entry_id": 23},
         }
     )
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {
             "event": "end-file",
             "reason": "error",
@@ -110,32 +117,32 @@ def test_worker_ignores_late_events_from_a_channel_replaced_by_a_newer_request()
     second = Channel(name="Second", url="rtsp://example.com/second")
 
     worker.load_channel(first)
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {"request_id": 17, "error": "success", "data": {"playlist_entry_id": 31}}
     )
     worker.load_channel(second)
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {"request_id": 18, "error": "success", "data": {"playlist_entry_id": 32}}
     )
 
-    worker._handle_mpv_message({"event": "file-loaded"})
+    deliver_message(worker, {"event": "file-loaded"})
     assert loaded.count() == 1
     assert loaded.at(0)[0] == second
 
     worker.load_channel(first)
     third_request_id = worker._pending_request_id
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {
             "request_id": third_request_id,
             "error": "success",
             "data": {"playlist_entry_id": 33},
         }
     )
-    worker._handle_mpv_message({"event": "file-loaded", "playlist_entry_id": 33})
+    deliver_message(worker, {"event": "file-loaded", "playlist_entry_id": 33})
     assert loaded.count() == 2
     assert loaded.at(1)[0] == first
 
-    worker._handle_mpv_message({"event": "file-loaded", "playlist_entry_id": 31})
+    deliver_message(worker, {"event": "file-loaded", "playlist_entry_id": 31})
     assert loaded.count() == 2
 
 
@@ -163,7 +170,7 @@ def test_worker_reports_audio_tracks_and_queues_track_selection() -> None:
     worker = ready_worker(process)
     tracks_changed = QSignalSpy(worker.audio_tracks_changed)
 
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {
             "event": "property-change",
             "name": "track-list",
@@ -200,21 +207,21 @@ def test_worker_reports_stream_titles_from_metadata() -> None:
     worker = ready_worker(FakeMpvProcess())
     titles = QSignalSpy(worker.stream_title_changed)
 
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {
             "event": "property-change",
             "name": "metadata",
             "data": {"TITLE": "  Evening News  "},
         }
     )
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {
             "event": "property-change",
             "name": "metadata",
             "data": {"title": "Programme", "ICY-TITLE": "Artist - Track"},
         }
     )
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {"event": "property-change", "name": "metadata", "data": {}}
     )
 
@@ -234,7 +241,7 @@ def test_worker_refreshes_track_list_after_audio_selection() -> None:
         time.sleep(0.01)
     selection_request_id = process.commands[-1][1]
 
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {"request_id": selection_request_id, "error": "success"}
     )
 
@@ -260,7 +267,7 @@ def test_worker_queues_stop_and_mute_commands_and_reports_control_errors() -> No
         ["set_property", "mute", True],
     ]
     stop_request_id = process.commands[0][1]
-    worker._handle_mpv_message(
+    deliver_message(worker,
         {"request_id": stop_request_id, "error": "command unavailable"}
     )
     assert failures.count() == 1
